@@ -43,7 +43,7 @@ def format_timestamp(ts: int) -> str:
 
 
 def render_event(event: Event, idx: int) -> list:
-    """Render a single event using hiccup"""
+    """Render a single event using hiccup with collapsible details"""
 
     # Color coding by type
     colors = {
@@ -55,16 +55,18 @@ def render_event(event: Event, idx: int) -> list:
     }
     color = colors.get(event.type, "#666")
 
-    header = ["div.event-header",
+    # Summary line
+    summary = ["summary.event-summary",
         ["span.event-num", f"#{idx}"],
         ["span.event-type", {"style": f"color: {color}"}, event.type.upper()],
-        ["span.event-time", format_timestamp(event.timestamp)]
+        ["span.event-time", format_timestamp(event.timestamp)],
+        ["span.event-preview", event.content[:60] + "..." if len(event.content) > 60 else event.content]
     ]
 
     content = ["div.event-content", event.content]
 
     # Add metadata for compaction events
-    parts = [header, content]
+    parts = [content]
     if event.type == "compaction":
         kept = len(event.kept_ids) if event.kept_ids else 0
         released = len(event.released_ids) if event.released_ids else 0
@@ -76,7 +78,7 @@ def render_event(event: Event, idx: int) -> list:
         ]
         parts.append(meta)
 
-    return ["div.event", {"id": f"event-{idx}"}, parts]
+    return ["details.event", {"id": f"event-{idx}"}, summary, *parts]
 
 
 def render_page(events: List[Event]) -> str:
@@ -120,17 +122,20 @@ def render_page(events: List[Event]) -> str:
         ]
     ]
 
-    # Current memories
+    # Current memories - each memory collapsible
     memory_list = [
-        ["div.memory",
-            ["div.memory-id", mem_id[:8]],
+        ["details.memory",
+            ["summary.memory-summary",
+                ["span.memory-id", mem_id[:8]],
+                ["span.memory-preview", memories[mem_id][:80] + "..." if len(memories[mem_id]) > 80 else memories[mem_id]]
+            ],
             ["div.memory-content", memories[mem_id]]
         ]
         for mem_id in memory_order
     ]
 
     memories_section = ["div.section",
-        ["h2", "Current Memories"],
+        ["h2", f"Current Memories ({len(memories)})"],
         ["div.memories", memory_list]
     ]
 
@@ -204,18 +209,32 @@ def render_page(events: List[Event]) -> str:
     }
     .memory {
         background: #2a2a2a;
-        padding: 15px;
         border-radius: 8px;
         border-left: 4px solid #4a90e2;
+    }
+    .memory-summary {
+        padding: 15px;
+        cursor: pointer;
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }
+    .memory-summary:hover {
+        background: #333;
     }
     .memory-id {
         font-family: monospace;
         color: #888;
         font-size: 0.85em;
-        margin-bottom: 8px;
+    }
+    .memory-preview {
+        color: #aaa;
+        flex: 1;
     }
     .memory-content {
         color: #e0e0e0;
+        padding: 0 15px 15px 15px;
+        white-space: pre-wrap;
     }
     .events {
         display: flex;
@@ -224,16 +243,19 @@ def render_page(events: List[Event]) -> str:
     }
     .event {
         background: #2a2a2a;
-        padding: 15px;
         border-radius: 8px;
         border-left: 4px solid #666;
     }
-    .event-header {
+    .event-summary {
+        padding: 15px;
+        cursor: pointer;
         display: flex;
         gap: 15px;
         align-items: center;
-        margin-bottom: 10px;
         font-size: 0.9em;
+    }
+    .event-summary:hover {
+        background: #333;
     }
     .event-num {
         font-family: monospace;
@@ -245,11 +267,17 @@ def render_page(events: List[Event]) -> str:
     }
     .event-time {
         color: #888;
-        margin-left: auto;
+    }
+    .event-preview {
+        color: #aaa;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
     .event-content {
         color: #e0e0e0;
-        padding: 10px 0;
+        padding: 0 15px 15px 15px;
         white-space: pre-wrap;
     }
     .event-meta {
