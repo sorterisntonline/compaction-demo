@@ -24,7 +24,7 @@ from consensual_memory import Memory, compact
 # Paths
 ROOT = Path(__file__).parent
 EVENTS_FILE = ROOT / "events.jsonl"
-INBOX = ROOT / "inbox"
+INBOX = ROOT / "/messages"
 
 INBOX.mkdir(exist_ok=True)
 
