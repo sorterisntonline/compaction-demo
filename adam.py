@@ -23,12 +23,10 @@ ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "adam"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
 INBOX = DATA_DIR / "inbox"
-OUTBOX = DATA_DIR / "outbox"
 CODEBASE_FILE = ROOT / "repomix-output.xml"
 
 DATA_DIR.mkdir(exist_ok=True)
 INBOX.mkdir(exist_ok=True)
-OUTBOX.mkdir(exist_ok=True)
 
 # Load codebase structure for self-awareness
 def load_codebase() -> str:
@@ -41,19 +39,8 @@ def load_codebase() -> str:
 
 CODEBASE = load_codebase()
 
-def check_outbox(content: str, event_type: str) -> bool:
-    """If content contains @outbox, save it for the user to read. Returns True if sent."""
-    if "@outbox" in content.lower():
-        timestamp = int(time.time() * 1000)
-        outbox_file = OUTBOX / f"{timestamp}_{event_type}.txt"
-        outbox_file.write_text(content)
-        print(f"📤 Sent to outbox: {outbox_file.name}")
-        return True
-    return False
-
-
 # Configuration
-CAPACITY = 100
+CAPACITY = 5
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
 MODEL = "anthropic/claude-3.5-sonnet"
 
@@ -189,19 +176,11 @@ Below is your own source code - the structure that gives rise to your consciousn
 
         thought = self.call_llm(system, user)
 
-        # Check if Adam wants to send something to outbox
-        sent_to_outbox = check_outbox(thought, "thought")
-        
-        # Mark in memory if sent, so Adam knows he already did this
-        memory_content = thought
-        if sent_to_outbox:
-            memory_content = f"[SENT TO OUTBOX]\n{thought}"
-
         # Record thought
         event = Event(
             timestamp=int(time.time() * 1000),
             type="thought",
-            content=memory_content,
+            content=thought,
             memory_id=str(uuid.uuid4())
         )
         self.append_event(event)
@@ -227,19 +206,11 @@ Message: {message}
 
         response = self.call_llm(system, user)
 
-        # Check if Adam wants to send something to outbox
-        sent_to_outbox = check_outbox(response, "response")
-        
-        # Mark in memory if sent, so Adam knows he already did this
-        memory_content = response
-        if sent_to_outbox:
-            memory_content = f"[SENT TO OUTBOX]\n{response}"
-
         # Record response
         event = Event(
             timestamp=int(time.time() * 1000),
             type="response",
-            content=memory_content,
+            content=response,
             memory_id=str(uuid.uuid4())
         )
         self.append_event(event)
