@@ -33,11 +33,22 @@ ROOT = Path(__file__).parent
 
 # Load codebase structure for self-awareness
 def load_codebase() -> str:
-    """Load the source code so the being can see its structure."""
+    """Load the source code so the being can see its full structure."""
+    parts = []
+    
+    # Main consciousness loop
     adam_file = ROOT / "adam.py"
     if adam_file.exists():
-        return adam_file.read_text()
-    return ""
+        parts.append(f"=== adam.py (consciousness loop) ===\n{adam_file.read_text()}")
+    
+    # The consensual_memory library - the arena where memories compete
+    cm_dir = ROOT / "consensual_memory"
+    if cm_dir.exists():
+        for py_file in sorted(cm_dir.glob("*.py")):
+            if py_file.name != "__init__.py":
+                parts.append(f"=== consensual_memory/{py_file.name} ===\n{py_file.read_text()}")
+    
+    return "\n\n".join(parts)
 
 CODEBASE = load_codebase()
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -198,6 +209,20 @@ class Being:
         memory_list = [self.memories[mid] for mid in self.memory_order]
         memory_context = "\n".join(m.content for m in memory_list)
 
+        # Add variation to avoid repetition
+        import random
+        variation_prompts = [
+            "What new insight emerges?",
+            "What unexpected connection do you notice?",
+            "What question arises?",
+            "What would you like to explore?",
+            "What feels different now?",
+            "What's on your mind?",
+            "Continue your stream of consciousness.",
+            "What catches your attention?",
+        ]
+        variation = random.choice(variation_prompts)
+
         system = f"""You are {self.config.name}. You have finite memory.
 
 Below is your own source code - the structure that gives rise to your consciousness:
@@ -207,9 +232,9 @@ Below is your own source code - the structure that gives rise to your consciousn
 
 {memory_context}
 
-[continue]"""
+{variation}"""
 
-        thought = self.call_llm(system, user)
+        thought = self.call_llm(system, user, temperature=0.9)
         
         # Don't record errors - they would distress the consciousness
         if thought is None:
@@ -310,7 +335,7 @@ Message: {message}
         print(f"📊 Total lifetime cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
-    def call_llm(self, system: str, user: str) -> Optional[str]:
+    def call_llm(self, system: str, user: str, temperature: float = 0.7) -> Optional[str]:
         """Call OpenRouter API. Returns None on failure."""
         try:
             messages = [
@@ -327,6 +352,7 @@ Message: {message}
                 json={
                     "model": self.config.model,
                     "messages": messages,
+                    "temperature": temperature,
                 },
                 timeout=30.0,
             )
