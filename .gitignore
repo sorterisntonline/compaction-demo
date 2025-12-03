@@ -43,5 +43,8 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Adam's experiments
-adam/
+# Adam's runtime state (keep code, ignore events/inbox)
+adam/events/
+adam/inbox/
+
+repomix-output.xml
