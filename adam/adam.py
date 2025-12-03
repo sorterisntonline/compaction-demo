@@ -31,9 +31,9 @@ EVENTS.mkdir(exist_ok=True)
 INBOX.mkdir(exist_ok=True)
 
 # Configuration
-CAPACITY = 100  # Maximum memories before compaction
+CAPACITY = 5  # Maximum memories before compaction
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "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")
-MODEL = "anthropic/claude-3.5-haiku"  # Fast and cheap for exploration
+MODEL = "anthropic/claude-4.5-sonnet"  # Fast and cheap for exploration
 
 
 @dataclass
@@ -43,6 +43,7 @@ class CostMetrics:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     total_calls: int = 0
+    total_votes: int = 0
 
 
 class Adam:
