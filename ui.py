@@ -5,21 +5,20 @@ Adam UI: FastAPI server for visualizing Adam's event log and memories
 
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List
 from dataclasses import asdict
 from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from python_hiccup.html import render
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from adam import Event
 
-# Paths
+# Paths - adam/ is just data
 ROOT = Path(__file__).parent
-EVENTS_FILE = ROOT / "events.jsonl"
+DATA_DIR = ROOT / "adam"
+EVENTS_FILE = DATA_DIR / "events.jsonl"
 
 app = FastAPI(title="Adam Viewer")
 
@@ -361,3 +360,4 @@ if __name__ == "__main__":
     import uvicorn
     print("🌐 Starting Adam UI on http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

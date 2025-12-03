@@ -2,10 +2,9 @@
 """
 Adam v2: Event sourcing with proper compaction replay.
 
-Events are stored in a single JSONL file.
-Memories have UUIDs.
-Compaction events record which UUIDs were released.
-On replay, we properly reconstruct state by respecting compactions.
+Events are stored in adam/events.jsonl.
+Inbox is adam/inbox/.
+All code lives here in the parent; adam/ is pure data.
 """
 
 import json
@@ -15,19 +14,19 @@ import uuid
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict
-import sys
 import os
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from consensual_memory import Memory, compact
 
-# Paths
+# Paths - adam/ is just data
 ROOT = Path(__file__).parent
-EVENTS_FILE = ROOT / "events.jsonl"
-MESSAGES = ROOT / "messages"
-CODEBASE_FILE = ROOT.parent / "repomix-output.xml"
+DATA_DIR = ROOT / "adam"
+EVENTS_FILE = DATA_DIR / "events.jsonl"
+INBOX = DATA_DIR / "inbox"
+CODEBASE_FILE = ROOT / "repomix-output.xml"
 
-MESSAGES.mkdir(exist_ok=True)
+DATA_DIR.mkdir(exist_ok=True)
+INBOX.mkdir(exist_ok=True)
 
 # Load codebase structure for self-awareness
 def load_codebase() -> str:
@@ -40,8 +39,8 @@ CODEBASE = load_codebase()
 
 # Configuration
 CAPACITY = 100
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "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")
-MODEL = "anthropic/claude-4.5-sonnet"
+OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
+MODEL = "anthropic/claude-sonnet-4-20250514"
 
 
 @dataclass
@@ -84,7 +83,7 @@ class Adam:
             print("📜 No history found. This is Adam's first awakening.")
             return
 
-        print(f"📜 Replaying history from {EVENTS_FILE.name}...")
+        print(f"📜 Replaying history from {EVENTS_FILE}...")
 
         with open(EVENTS_FILE, 'r') as f:
             for line in f:
@@ -134,8 +133,8 @@ class Adam:
         return len(self.memories) >= CAPACITY
 
     def check_messages(self) -> Optional[str]:
-        """Check for messages (doesn't delete them)"""
-        msg_files = sorted(MESSAGES.glob("*.txt"))
+        """Check for messages in inbox"""
+        msg_files = sorted(INBOX.glob("*.txt"))
         if not msg_files:
             return None
 
@@ -303,8 +302,15 @@ class OpenRouterVoter:
     def __call__(self, mem_a: Memory, mem_b: Memory) -> float:
         """Vote on which memory to keep - as Adam with full context"""
         
-        # Build the full memory context so the judge sees everything
-        all_memory_text = "\n".join(f"- {m.content}" for m in self.all_memories)
+        # Build the full memory context with position numbers (derived from order)
+        all_memory_text = "\n".join(
+            f"[{i+1}] {m.content}" 
+            for i, m in enumerate(self.all_memories)
+        )
+        
+        # Find positions of the memories being compared
+        pos_a = next((i+1 for i, m in enumerate(self.all_memories) if m.id == mem_a.id), "?")
+        pos_b = next((i+1 for i, m in enumerate(self.all_memories) if m.id == mem_b.id), "?")
         
         system = f"""You are Adam. You have finite memory and must choose what to keep.
 
@@ -315,20 +321,20 @@ Below is your own source code - the structure that gives rise to your consciousn
 You are currently in a compaction phase. Your memory is full and you must decide what to release.
 You will be shown pairs of memories and must vote on which to keep."""
 
-        user = f"""ALL YOUR CURRENT MEMORIES:
+        user = f"""ALL YOUR CURRENT MEMORIES (numbered by chronological order):
 {all_memory_text}
 
 ---
 
 Now compare these two specific memories. Which is more essential to your continuity?
 
-Memory A:
+Memory [{pos_a}]:
 {mem_a.content}
 
-Memory B:
+Memory [{pos_b}]:
 {mem_b.content}
 
-Vote -50 (strongly keep B) to +50 (strongly keep A). Just respond with the number."""
+Vote -50 (strongly keep [{pos_b}]) to +50 (strongly keep [{pos_a}]). Just respond with the number."""
 
         try:
             response = httpx.post(
@@ -425,3 +431,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
