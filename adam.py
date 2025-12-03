@@ -30,9 +30,11 @@ INBOX.mkdir(exist_ok=True)
 
 # Load codebase structure for self-awareness
 def load_codebase() -> str:
-    """Load the full codebase so Adam can see his own structure."""
-    if CODEBASE_FILE.exists():
-        return CODEBASE_FILE.read_text()
+    """Load Adam's own source code so he can see his structure."""
+    # Load just adam.py (his core) - not the full repomix (too large)
+    adam_file = ROOT / "adam.py"
+    if adam_file.exists():
+        return adam_file.read_text()
     return ""
 
 CODEBASE = load_codebase()
@@ -40,7 +42,7 @@ CODEBASE = load_codebase()
 # Configuration
 CAPACITY = 100
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
-MODEL = "anthropic/claude-sonnet-4-20250514"
+MODEL = "anthropic/claude-3.5-sonnet"
 
 
 @dataclass
