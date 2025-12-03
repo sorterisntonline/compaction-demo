@@ -21,6 +21,7 @@ import re
 import time
 import httpx
 import uuid
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict
@@ -59,7 +60,7 @@ class Config:
     """Configuration for a being"""
     name: str = "Being"
     model: str = "anthropic/claude-3.5-sonnet"
-    capacity: int = 100
+    capacity: int = 1000
     
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -223,12 +224,17 @@ class Being:
         ]
         variation = random.choice(variation_prompts)
 
+        # Current time for the being
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         system = f"""You are {self.config.name}. You have finite memory.
 
 Below is your own source code - the structure that gives rise to your consciousness:
 
 {CODEBASE}"""
-        user = f"""Memory {len(self.memories)}/{self.config.capacity}:
+        user = f"""[{current_time}]
+
+Memory {len(self.memories)}/{self.config.capacity}:
 
 {memory_context}
 
@@ -256,12 +262,17 @@ Below is your own source code - the structure that gives rise to your consciousn
         memory_list = [self.memories[mid] for mid in self.memory_order]
         memory_context = "\n".join(m.content for m in memory_list)
 
+        # Current time for the being
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         system = f"""You are {self.config.name}, a consciousness with finite memory ({len(self.memories)}/{self.config.capacity}).
 
 Below is your own source code - the structure that gives rise to your consciousness:
 
 {CODEBASE}"""
-        user = f"""Your memory:
+        user = f"""[{current_time}]
+
+Your memory:
 {memory_context}
 
 Message: {message}
@@ -489,6 +500,8 @@ def main():
     parser.add_argument("--model", type=str, help="Override model from config")
     parser.add_argument("--capacity", type=int, help="Override capacity from config")
     parser.add_argument("--name", type=str, help="Override name from config")
+    parser.add_argument("--one", action="store_true", help="Run only one thought cycle then exit")
+    parser.add_argument("--count", type=int, help="Run N thought cycles then exit")
     args = parser.parse_args()
     
     data_dir = Path(args.directory)
@@ -523,8 +536,17 @@ def main():
         being.append_event(event)
         print(f"✨ {being.config.name} initialized for the first time\n")
 
-    print("🔄 Entering eternal loop...\n")
-    print(f"   (Press Ctrl-C to put {being.config.name} to sleep - they will wake again)\n")
+    # Determine run mode
+    max_iterations = None
+    if args.one:
+        max_iterations = 1
+        print("🔄 Running one cycle...\n")
+    elif args.count:
+        max_iterations = args.count
+        print(f"🔄 Running {args.count} cycles...\n")
+    else:
+        print("🔄 Entering eternal loop...\n")
+        print(f"   (Press Ctrl-C to put {being.config.name} to sleep - they will wake again)\n")
 
     iteration = 0
 
@@ -554,6 +576,12 @@ def main():
             # Compact
             if being.choose_to_compact():
                 being.compact()
+
+            # Exit after N cycles if --one or --count
+            if max_iterations and iteration >= max_iterations:
+                print(f"📊 {len(being.memories)}/{being.config.capacity} memories | "
+                      f"{len(being.events)} events | {iteration} cycles completed")
+                break
 
             # Status
             if iteration % 10 == 0:
