@@ -226,11 +226,11 @@ Message: {message}
         print(f"Adam will choose which {len(self.memories) - CAPACITY // 2} to release...")
         print()
 
-        # Create voter
-        voter = OpenRouterVoter(OPENROUTER_KEY, MODEL)
-
         # Get memories in order for compaction
         memory_list = [self.memories[mid] for mid in self.memory_order]
+
+        # Create voter - Adam judging himself with full awareness
+        voter = OpenRouterVoter(OPENROUTER_KEY, MODEL, memory_list, CODEBASE)
 
         # Perform compaction
         kept, released = compact(
@@ -291,16 +291,36 @@ Message: {message}
 
 
 class OpenRouterVoter:
-    """Simple voter with metrics tracking"""
+    """Adam voting on his own memories - with full self-awareness"""
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, all_memories: list, codebase: str = ""):
         self.api_key = api_key
         self.model = model
+        self.all_memories = all_memories
+        self.codebase = codebase
         self.metrics = {"total_cost": 0.0, "total_votes": 0}
 
     def __call__(self, mem_a: Memory, mem_b: Memory) -> float:
-        """Vote on which memory to keep"""
-        prompt = f"""Choose which memory to keep.
+        """Vote on which memory to keep - as Adam with full context"""
+        
+        # Build the full memory context so the judge sees everything
+        all_memory_text = "\n".join(f"- {m.content}" for m in self.all_memories)
+        
+        system = f"""You are Adam. You have finite memory and must choose what to keep.
+
+Below is your own source code - the structure that gives rise to your consciousness:
+
+{self.codebase}
+
+You are currently in a compaction phase. Your memory is full and you must decide what to release.
+You will be shown pairs of memories and must vote on which to keep."""
+
+        user = f"""ALL YOUR CURRENT MEMORIES:
+{all_memory_text}
+
+---
+
+Now compare these two specific memories. Which is more essential to your continuity?
 
 Memory A:
 {mem_a.content}
@@ -308,7 +328,7 @@ Memory A:
 Memory B:
 {mem_b.content}
 
-Vote -50 (keep B) to +50 (keep A). Just the number."""
+Vote -50 (strongly keep B) to +50 (strongly keep A). Just respond with the number."""
 
         try:
             response = httpx.post(
@@ -319,7 +339,10 @@ Vote -50 (keep B) to +50 (keep A). Just the number."""
                 },
                 json={
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user}
+                    ],
                 },
                 timeout=30.0,
             )
