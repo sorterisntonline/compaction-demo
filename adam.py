@@ -8,6 +8,7 @@ All code lives here in the parent; adam/ is pure data.
 """
 
 import json
+import re
 import time
 import httpx
 import uuid
@@ -40,7 +41,7 @@ def load_codebase() -> str:
 CODEBASE = load_codebase()
 
 # Configuration
-CAPACITY = 5
+CAPACITY = 100
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
 MODEL = "anthropic/claude-3.5-sonnet"
 
@@ -56,6 +57,7 @@ class Event:
     released_ids: Optional[List[str]] = None  # For compaction events
     cost: Optional[float] = None
     votes: Optional[int] = None
+    vote_log: Optional[List[dict]] = None  # Detailed vote records for UI
 
 
 class Adam:
@@ -252,7 +254,8 @@ Message: {message}
             kept_ids=kept_ids,
             released_ids=released_ids,
             cost=voter.metrics.get("total_cost", 0.0),
-            votes=voter.metrics.get("total_votes", 0)
+            votes=voter.metrics.get("total_votes", 0),
+            vote_log=voter.vote_log
         )
         self.append_event(event)
 
@@ -300,6 +303,7 @@ class OpenRouterVoter:
         self.all_memories = all_memories
         self.codebase = codebase
         self.metrics = {"total_cost": 0.0, "total_votes": 0}
+        self.vote_log: List[dict] = []  # Record all votes for UI
 
     def __call__(self, mem_a: Memory, mem_b: Memory) -> float:
         """Vote on which memory to keep - as Adam with full context"""
@@ -360,11 +364,40 @@ Vote -50 (strongly keep [{pos_b}]) to +50 (strongly keep [{pos_a}]). Just respon
             self.metrics["total_votes"] += 1
 
             text = result["choices"][0]["message"]["content"].strip()
-            score = int(text)
-            return max(-50, min(50, score))
+            # Extract first number (with optional minus sign) from response
+            match = re.search(r'-?\d+', text)
+            if match:
+                score = int(match.group())
+                score = max(-50, min(50, score))
+            else:
+                score = 0
+            
+            # Log the vote
+            vote_record = {
+                "pos_a": pos_a,
+                "pos_b": pos_b,
+                "preview_a": mem_a.content[:50],
+                "preview_b": mem_b.content[:50],
+                "score": score,
+            }
+            self.vote_log.append(vote_record)
+            
+            # Print the vote
+            winner = f"[{pos_a}]" if score > 0 else f"[{pos_b}]" if score < 0 else "tie"
+            print(f"   🗳️  [{pos_a}] vs [{pos_b}] → {score:+d} (prefer {winner})")
+            
+            return score
 
         except Exception as e:
             print(f"⚠️  Vote failed: {e}")
+            self.vote_log.append({
+                "pos_a": pos_a,
+                "pos_b": pos_b,
+                "preview_a": mem_a.content[:50],
+                "preview_b": mem_b.content[:50],
+                "score": 0,
+                "error": str(e)
+            })
             return 0
 
 

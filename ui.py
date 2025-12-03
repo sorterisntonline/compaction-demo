@@ -4,13 +4,14 @@ Adam UI: FastAPI server for visualizing Adam's event log and memories
 """
 
 import json
+import time
 from pathlib import Path
 from typing import List
 from dataclasses import asdict
 from datetime import datetime
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from python_hiccup.html import render
 
 from adam import Event
@@ -19,6 +20,7 @@ from adam import Event
 ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "adam"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
+INBOX = DATA_DIR / "inbox"
 
 app = FastAPI(title="Adam Viewer")
 
@@ -73,13 +75,38 @@ def render_event(event: Event, idx: int) -> list:
     if event.type == "compaction":
         kept = len(event.kept_ids) if event.kept_ids else 0
         released = len(event.released_ids) if event.released_ids else 0
-        meta = ["div.event-meta",
+
+        # Build meta spans - only include non-empty ones
+        meta_items = [
             ["span", f"Kept: {kept}"],
-            ["span", f"Released: {released}"],
-            ["span", f"Cost: ${event.cost:.6f}" if event.cost else ""],
-            ["span", f"Votes: {event.votes}" if event.votes else ""]
+            ["span", f"Released: {released}"]
         ]
+        if event.cost:
+            meta_items.append(["span", f"Cost: ${event.cost:.6f}"])
+        if event.votes:
+            meta_items.append(["span", f"Votes: {event.votes}"])
+
+        meta = ["div.event-meta"] + meta_items
         parts.append(meta)
+        
+        # Show vote log if available
+        if hasattr(event, 'vote_log') and event.vote_log:
+            vote_rows = []
+            for v in event.vote_log:
+                score = v.get('score', 0)
+                winner = f"[{v['pos_a']}]" if score > 0 else f"[{v['pos_b']}]" if score < 0 else "tie"
+                vote_rows.append(
+                    ["div.vote-row",
+                        ["span.vote-pair", f"[{v['pos_a']}] vs [{v['pos_b']}]"],
+                        ["span.vote-score", {"style": f"color: {'#50c878' if score > 0 else '#ff6b6b' if score < 0 else '#888'}"}, f"{score:+d}"],
+                        ["span.vote-winner", f"→ {winner}"],
+                    ]
+                )
+            vote_section = ["div.vote-log",
+                ["div.vote-log-header", "Vote Log:"],
+                *vote_rows
+            ]
+            parts.append(vote_section)
 
     return ["details.event", {"id": f"event-{idx}"}, summary, *parts]
 
@@ -141,6 +168,17 @@ def render_page(events: List[Event]) -> str:
         ["h2", f"Current Memories ({len(memories)})"],
         ["div.memories", memory_list]
     ]
+
+    # Message form - use raw HTML to avoid hiccup textarea issues
+    message_form_html = """
+    <div class="section">
+        <h2>Send Message to Adam</h2>
+        <form method="post" action="/send">
+            <textarea name="message" placeholder="Type your message to Adam..." rows="4"></textarea>
+            <button type="submit">Send Message</button>
+        </form>
+    </div>
+    """
 
     # Event log
     event_list = [render_event(e, i) for i, e in enumerate(events)]
@@ -292,6 +330,74 @@ def render_page(events: List[Event]) -> str:
         font-size: 0.85em;
         color: #888;
     }
+    .vote-log {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #333;
+    }
+    .vote-log-header {
+        color: #ffa500;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+    .vote-row {
+        display: flex;
+        gap: 15px;
+        padding: 5px 0;
+        font-family: monospace;
+        font-size: 0.9em;
+    }
+    .vote-pair {
+        color: #aaa;
+        min-width: 100px;
+    }
+    .vote-score {
+        font-weight: bold;
+        min-width: 50px;
+    }
+    .vote-winner {
+        color: #888;
+    }
+    form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        background: #2a2a2a;
+        padding: 20px;
+        border-radius: 8px;
+    }
+    textarea {
+        width: 100%;
+        padding: 15px;
+        background: #1a1a1a;
+        border: 2px solid #333;
+        border-radius: 6px;
+        color: #e0e0e0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+        font-size: 1em;
+        resize: vertical;
+    }
+    textarea:focus {
+        outline: none;
+        border-color: #4a90e2;
+    }
+    button {
+        padding: 12px 24px;
+        background: #4a90e2;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 1em;
+        font-weight: bold;
+        cursor: pointer;
+        align-self: flex-start;
+    }
+    button:hover {
+        background: #3a7bc8;
+    }
+    button:active {
+        background: #2a6bb8;
+    }
     """
 
     # Full page
@@ -313,7 +419,12 @@ def render_page(events: List[Event]) -> str:
         ]
     ]
 
-    return render(page)
+    # Render hiccup page and inject the raw form HTML
+    html = render(page)
+    # Insert the form after the stats div
+    html = html.replace('</div></div><div class="section"><h2>Current Memories',
+                       '</div></div>' + message_form_html + '<div class="section"><h2>Current Memories')
+    return html
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -358,6 +469,23 @@ async def get_stats():
         "total_cost": total_cost,
         "compactions": sum(1 for e in events if e.type == "compaction")
     }
+
+
+@app.post("/send")
+async def send_message(message: str = Form(...)):
+    """Send a message to Adam's inbox"""
+    if not message.strip():
+        return RedirectResponse(url="/", status_code=303)
+
+    # Create a unique filename with timestamp
+    timestamp = int(time.time() * 1000)
+    filename = INBOX / f"message_{timestamp}.txt"
+
+    # Write message to inbox
+    filename.write_text(message.strip())
+
+    # Redirect back to main page
+    return RedirectResponse(url="/", status_code=303)
 
 
 if __name__ == "__main__":
