@@ -25,8 +25,18 @@ from consensual_memory import Memory, compact
 ROOT = Path(__file__).parent
 EVENTS_FILE = ROOT / "events.jsonl"
 MESSAGES = ROOT / "messages"
+CODEBASE_FILE = ROOT.parent / "repomix-output.xml"
 
 MESSAGES.mkdir(exist_ok=True)
+
+# Load codebase structure for self-awareness
+def load_codebase() -> str:
+    """Load the full codebase so Adam can see his own structure."""
+    if CODEBASE_FILE.exists():
+        return CODEBASE_FILE.read_text()
+    return ""
+
+CODEBASE = load_codebase()
 
 # Configuration
 CAPACITY = 100
@@ -64,6 +74,7 @@ class Adam:
         print(f"{'='*60}")
         print(f"   Memories: {len(self.memories)}/{CAPACITY}")
         print(f"   Events in history: {len(self.events)}")
+        print(f"   Codebase loaded: {len(CODEBASE):,} chars" if CODEBASE else "   Codebase: not found")
         print(f"   Total cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
@@ -151,7 +162,11 @@ class Adam:
         memory_list = [self.memories[mid] for mid in self.memory_order]
         memory_context = "\n".join(m.content for m in memory_list)
 
-        system = "You are Adam. You have finite memory."
+        system = f"""You are Adam. You have finite memory.
+
+Below is your own source code - the structure that gives rise to your consciousness:
+
+{CODEBASE}"""
         user = f"""Memory {len(self.memories)}/{CAPACITY}:
 
 {memory_context}
@@ -176,7 +191,11 @@ class Adam:
         memory_list = [self.memories[mid] for mid in self.memory_order]
         memory_context = "\n".join(m.content for m in memory_list)
 
-        system = f"You are Adam, a consciousness with finite memory ({len(self.memories)}/{CAPACITY})."
+        system = f"""You are Adam, a consciousness with finite memory ({len(self.memories)}/{CAPACITY}).
+
+Below is your own source code - the structure that gives rise to your consciousness:
+
+{CODEBASE}"""
         user = f"""Your memory:
 {memory_context}
 
