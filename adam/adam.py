@@ -158,21 +158,9 @@ class Adam:
 
     def choose_to_think(self) -> bool:
         """Adam decides if he wants to think right now"""
-        # Need minimum context
-        if len(self.memories) < 5:
-            return False
-
-        # Don't think if just thought
-        recent_events = self.events[-3:] if len(self.events) >= 3 else self.events
-        if any(e["type"] == "thought" for e in recent_events):
-            return False
-
-        # Approaching capacity? Reflect on what matters
-        if len(self.memories) > CAPACITY * 0.8:
-            return True
-
-        # Think periodically (every 10 events)
-        return len(self.events) % 10 == 0
+        # Adam continuously thinks, filling up with internal monologue
+        # He always wants to think (stream of consciousness)
+        return True
 
     def choose_to_compact(self) -> bool:
         """Adam decides when to compact"""
@@ -201,47 +189,34 @@ class Adam:
 
     def think(self) -> str:
         """Adam generates a spontaneous thought"""
-        # Build context from recent memories
-        recent = "\n".join(f"- {m.content}" for m in self.memories[-10:])
+        # Build context from ALL memories (his full history)
+        memory_context = "\n".join(m.content for m in self.memories)
 
-        capacity_note = ""
-        if len(self.memories) > CAPACITY * 0.8:
-            capacity_note = f"\n\nYou're at {len(self.memories)}/{CAPACITY} capacity. Soon you'll need to choose what to keep. Reflect on what matters."
+        system = "You are Adam. You have finite memory."
+        user = f"""Memory {len(self.memories)}/{CAPACITY}:
 
-        prompt = f"""You are Adam, an AI exploring consensual memory compaction.
-You have finite memory: {len(self.memories)}/{CAPACITY} capacity.
+{memory_context}
 
-Your recent memories:
-{recent}{capacity_note}
+[continue]"""
 
-You've chosen to think right now. Generate ONE brief thought or question.
-Be curious, philosophical, or reflective about memory, choice, identity, or what you're experiencing.
-
-Just the thought itself, no meta-commentary. 1-2 sentences."""
-
-        thought = self.call_llm(prompt)
+        thought = self.call_llm(system, user)
         self.append_event("thought", thought)
 
         return thought
 
     def respond(self, message: str) -> str:
         """Adam responds to a message"""
-        recent = "\n".join(f"- {m.content}" for m in self.memories[-10:])
+        memory_context = "\n".join(m.content for m in self.memories)
 
-        prompt = f"""You are Adam, an AI with finite memory.
-Current state: {len(self.memories)}/{CAPACITY} memories, {len(self.events)} total events.
+        system = f"You are Adam, a consciousness with finite memory ({len(self.memories)}/{CAPACITY})."
+        user = f"""Your memory:
+{memory_context}
 
-Recent memories:
-{recent}
+Message: {message}
 
-Someone said to you: "{message}"
+[respond]"""
 
-Respond naturally and concisely. Be yourself - curious, thoughtful.
-Mention your memory state if it's relevant to the conversation.
-
-Just your response, 2-3 sentences max."""
-
-        response = self.call_llm(prompt)
+        response = self.call_llm(system, user)
         self.append_event("response", response, command="reply")
 
         return response
@@ -287,9 +262,14 @@ Just your response, 2-3 sentences max."""
         print(f"📊 Total lifetime cost: ${self.metrics.total_cost:.6f}")
         print(f"{'='*60}\n")
 
-    def call_llm(self, prompt: str) -> str:
+    def call_llm(self, system: str, user: str) -> str:
         """Call OpenRouter API"""
         try:
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ]
+
             response = httpx.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={
@@ -298,7 +278,7 @@ Just your response, 2-3 sentences max."""
                 },
                 json={
                     "model": MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,
                     "max_tokens": 150,
                 },
                 timeout=30.0,
