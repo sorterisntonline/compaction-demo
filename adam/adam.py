@@ -24,9 +24,9 @@ from consensual_memory import Memory, compact
 # Paths
 ROOT = Path(__file__).parent
 EVENTS_FILE = ROOT / "events.jsonl"
-INBOX = ROOT / "/messages"
+MESSAGES = ROOT / "messages"
 
-INBOX.mkdir(exist_ok=True)
+MESSAGES.mkdir(exist_ok=True)
 
 # Configuration
 CAPACITY = 100
@@ -122,15 +122,18 @@ class Adam:
         """Adam compacts when full"""
         return len(self.memories) >= CAPACITY
 
-    def check_inbox(self) -> Optional[str]:
-        """Check for messages"""
-        inbox_files = sorted(INBOX.glob("*.txt"))
-        if not inbox_files:
+    def check_messages(self) -> Optional[str]:
+        """Check for messages (doesn't delete them)"""
+        msg_files = sorted(MESSAGES.glob("*.txt"))
+        if not msg_files:
             return None
 
-        msg_file = inbox_files[0]
+        msg_file = msg_files[0]
         content = msg_file.read_text().strip()
-        msg_file.unlink()
+
+        # Mark as read by renaming
+        read_file = msg_file.with_suffix('.read')
+        msg_file.rename(read_file)
 
         # Record perception
         event = Event(
@@ -341,8 +344,8 @@ def main():
         iteration += 1
 
         try:
-            # Check inbox
-            incoming = adam.check_inbox()
+            # Check messages
+            incoming = adam.check_messages()
             if incoming:
                 print(f"📨 Message: \"{incoming[:60]}{'...' if len(incoming) > 60 else ''}\"")
                 response = adam.respond(incoming)
