@@ -53,16 +53,20 @@ def render_event(event: Event, idx: int) -> list:
         "compaction": "#ffa500"
     }
     color = colors.get(event.type, "#666")
+    
+    # Handle empty content
+    event_content = event.content if event.content else "(empty)"
+    preview = event_content[:60] + "..." if len(event_content) > 60 else event_content
 
     # Summary line
     summary = ["summary.event-summary",
         ["span.event-num", f"#{idx}"],
         ["span.event-type", {"style": f"color: {color}"}, event.type.upper()],
         ["span.event-time", format_timestamp(event.timestamp)],
-        ["span.event-preview", event.content[:60] + "..." if len(event.content) > 60 else event.content]
+        ["span.event-preview", preview]
     ]
 
-    content = ["div.event-content", event.content]
+    content = ["div.event-content", event_content]
 
     # Add metadata for compaction events
     parts = [content]
@@ -126,9 +130,9 @@ def render_page(events: List[Event]) -> str:
         ["details.memory",
             ["summary.memory-summary",
                 ["span.memory-id", mem_id[:8]],
-                ["span.memory-preview", memories[mem_id][:80] + "..." if len(memories[mem_id]) > 80 else memories[mem_id]]
+                ["span.memory-preview", (memories[mem_id][:80] + "..." if len(memories[mem_id]) > 80 else memories[mem_id]) or "(empty)"]
             ],
-            ["div.memory-content", memories[mem_id]]
+            ["div.memory-content", memories[mem_id] or "(empty)"]
         ]
         for mem_id in memory_order
     ]

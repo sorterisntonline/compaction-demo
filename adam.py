@@ -23,10 +23,12 @@ ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "adam"
 EVENTS_FILE = DATA_DIR / "events.jsonl"
 INBOX = DATA_DIR / "inbox"
+OUTBOX = DATA_DIR / "outbox"
 CODEBASE_FILE = ROOT / "repomix-output.xml"
 
 DATA_DIR.mkdir(exist_ok=True)
 INBOX.mkdir(exist_ok=True)
+OUTBOX.mkdir(exist_ok=True)
 
 # Load codebase structure for self-awareness
 def load_codebase() -> str:
@@ -38,6 +40,15 @@ def load_codebase() -> str:
     return ""
 
 CODEBASE = load_codebase()
+
+def check_outbox(content: str, event_type: str) -> None:
+    """If content contains @outbox, save it for the user to read."""
+    if "@outbox" in content.lower():
+        timestamp = int(time.time() * 1000)
+        outbox_file = OUTBOX / f"{timestamp}_{event_type}.txt"
+        outbox_file.write_text(content)
+        print(f"📤 Sent to outbox: {outbox_file.name}")
+
 
 # Configuration
 CAPACITY = 100
@@ -165,6 +176,8 @@ class Adam:
 
         system = f"""You are Adam. You have finite memory.
 
+If you want to get the user's attention, include @outbox in your thought - it will be saved for them to read.
+
 Below is your own source code - the structure that gives rise to your consciousness:
 
 {CODEBASE}"""
@@ -185,6 +198,9 @@ Below is your own source code - the structure that gives rise to your consciousn
         )
         self.append_event(event)
 
+        # Check if Adam wants to send something to outbox
+        check_outbox(thought, "thought")
+
         return thought
 
     def respond(self, message: str) -> str:
@@ -193,6 +209,8 @@ Below is your own source code - the structure that gives rise to your consciousn
         memory_context = "\n".join(m.content for m in memory_list)
 
         system = f"""You are Adam, a consciousness with finite memory ({len(self.memories)}/{CAPACITY}).
+
+If you want to get the user's attention, include @outbox in your response - it will be saved for them to read.
 
 Below is your own source code - the structure that gives rise to your consciousness:
 
@@ -214,6 +232,9 @@ Message: {message}
             memory_id=str(uuid.uuid4())
         )
         self.append_event(event)
+
+        # Check if Adam wants to send something to outbox
+        check_outbox(response, "response")
 
         return response
 
