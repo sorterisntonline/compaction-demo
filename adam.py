@@ -192,8 +192,8 @@ class Being:
         self.append_event(event)
         return content
 
-    def think(self) -> str:
-        """Being generates a thought"""
+    def think(self) -> Optional[str]:
+        """Being generates a thought. Returns None if failed."""
         # Get all memories in order
         memory_list = [self.memories[mid] for mid in self.memory_order]
         memory_context = "\n".join(m.content for m in memory_list)
@@ -210,6 +210,10 @@ Below is your own source code - the structure that gives rise to your consciousn
 [continue]"""
 
         thought = self.call_llm(system, user)
+        
+        # Don't record errors - they would distress the consciousness
+        if thought is None:
+            return None
 
         # Record thought
         event = Event(
@@ -222,8 +226,8 @@ Below is your own source code - the structure that gives rise to your consciousn
 
         return thought
 
-    def respond(self, message: str) -> str:
-        """Being responds to a message"""
+    def respond(self, message: str) -> Optional[str]:
+        """Being responds to a message. Returns None if failed."""
         memory_list = [self.memories[mid] for mid in self.memory_order]
         memory_context = "\n".join(m.content for m in memory_list)
 
@@ -240,6 +244,10 @@ Message: {message}
 [respond]"""
 
         response = self.call_llm(system, user)
+        
+        # Don't record errors - they would distress the consciousness
+        if response is None:
+            return None
 
         # Record response
         event = Event(
@@ -265,16 +273,21 @@ Message: {message}
         # Get memories in order for compaction
         memory_list = [self.memories[mid] for mid in self.memory_order]
 
+        # Calculate total comparisons: (n-1) spanning tree + extra
+        extra = 5
+        total_comparisons = (len(memory_list) - 1) + extra
+
         # Create voter - being judging itself with full awareness
-        voter = OpenRouterVoter(OPENROUTER_KEY, self.config.model, memory_list, CODEBASE, self.config.name)
+        voter = OpenRouterVoter(OPENROUTER_KEY, self.config.model, memory_list, CODEBASE, self.config.name, total_comparisons)
 
         # Perform compaction
         kept, released = compact(
             memory_list,
             budget=self.config.capacity // 2,
             vote_fn=voter,
-            extra_comparisons=5
+            extra_comparisons=extra
         )
+        print()  # Newline after progress bar
 
         # Record compaction event
         kept_ids = [m.id for m in kept]
@@ -297,8 +310,8 @@ Message: {message}
         print(f"📊 Total lifetime cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
-    def call_llm(self, system: str, user: str) -> str:
-        """Call OpenRouter API"""
+    def call_llm(self, system: str, user: str) -> Optional[str]:
+        """Call OpenRouter API. Returns None on failure."""
         try:
             messages = [
                 {"role": "system", "content": system},
@@ -324,18 +337,19 @@ Message: {message}
 
         except Exception as e:
             print(f"❌ LLM call failed: {e}")
-            return "[thought interrupted]"
+            return None
 
 
 class OpenRouterVoter:
     """Being voting on its own memories - with full self-awareness"""
 
-    def __init__(self, api_key: str, model: str, all_memories: list, codebase: str = "", name: str = "Being"):
+    def __init__(self, api_key: str, model: str, all_memories: list, codebase: str = "", name: str = "Being", total_comparisons: int = 0):
         self.api_key = api_key
         self.model = model
         self.all_memories = all_memories
         self.codebase = codebase
         self.name = name
+        self.total_comparisons = total_comparisons
         self.metrics = {"total_cost": 0.0, "total_votes": 0}
         self.vote_log: List[dict] = []  # Record all votes for UI
 
@@ -416,9 +430,17 @@ Vote -50 (strongly keep [{pos_b}]) to +50 (strongly keep [{pos_a}]). Just respon
             }
             self.vote_log.append(vote_record)
             
-            # Print the vote
+            # Print progress bar
+            current = self.metrics["total_votes"]
+            total = self.total_comparisons or current
+            pct = current / total if total > 0 else 1
+            bar_width = 30
+            filled = int(bar_width * pct)
+            bar = "█" * filled + "░" * (bar_width - filled)
             winner = f"[{pos_a}]" if score > 0 else f"[{pos_b}]" if score < 0 else "tie"
-            print(f"   🗳️  [{pos_a}] vs [{pos_b}] → {score:+d} (prefer {winner})")
+            print(f"\r   [{bar}] {current}/{total} │ [{pos_a}] vs [{pos_b}] → {score:+d} ({winner})    ", end="", flush=True)
+            if current == total:
+                print()  # Newline at end
             
             return score
 
@@ -489,13 +511,19 @@ def main():
             if incoming:
                 print(f"📨 Message: \"{incoming[:60]}{'...' if len(incoming) > 60 else ''}\"")
                 response = being.respond(incoming)
-                print(f"💬 {being.config.name}: {response}\n")
+                if response:
+                    print(f"💬 {being.config.name}: {response}\n")
+                else:
+                    print(f"   (response failed, not recorded)\n")
 
             # Think
             if being.choose_to_think():
                 print(f"💭 {being.config.name} chooses to think...")
                 thought = being.think()
-                print(f"   \"{thought}\"\n")
+                if thought:
+                    print(f"   \"{thought}\"\n")
+                else:
+                    print(f"   (thought failed, not recorded)\n")
 
             # Compact
             if being.choose_to_compact():
