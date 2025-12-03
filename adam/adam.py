@@ -258,7 +258,6 @@ Message: {message}
                 json={
                     "model": MODEL,
                     "messages": messages,
-                    "max_tokens": 150,
                 },
                 timeout=30.0,
             )
@@ -302,7 +301,6 @@ Vote -50 (keep B) to +50 (keep A). Just the number."""
                 json={
                     "model": self.model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 10,
                 },
                 timeout=30.0,
             )
