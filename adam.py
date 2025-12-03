@@ -41,13 +41,15 @@ def load_codebase() -> str:
 
 CODEBASE = load_codebase()
 
-def check_outbox(content: str, event_type: str) -> None:
-    """If content contains @outbox, save it for the user to read."""
+def check_outbox(content: str, event_type: str) -> bool:
+    """If content contains @outbox, save it for the user to read. Returns True if sent."""
     if "@outbox" in content.lower():
         timestamp = int(time.time() * 1000)
         outbox_file = OUTBOX / f"{timestamp}_{event_type}.txt"
         outbox_file.write_text(content)
         print(f"📤 Sent to outbox: {outbox_file.name}")
+        return True
+    return False
 
 
 # Configuration
@@ -177,6 +179,7 @@ class Adam:
         system = f"""You are Adam. You have finite memory.
 
 If you want to get the user's attention, include @outbox in your thought - it will be saved for them to read.
+Memories marked [SENT TO OUTBOX] were already delivered - don't repeat similar messages.
 
 Below is your own source code - the structure that gives rise to your consciousness:
 
@@ -189,17 +192,22 @@ Below is your own source code - the structure that gives rise to your consciousn
 
         thought = self.call_llm(system, user)
 
+        # Check if Adam wants to send something to outbox
+        sent_to_outbox = check_outbox(thought, "thought")
+        
+        # Mark in memory if sent, so Adam knows he already did this
+        memory_content = thought
+        if sent_to_outbox:
+            memory_content = f"[SENT TO OUTBOX]\n{thought}"
+
         # Record thought
         event = Event(
             timestamp=int(time.time() * 1000),
             type="thought",
-            content=thought,
+            content=memory_content,
             memory_id=str(uuid.uuid4())
         )
         self.append_event(event)
-
-        # Check if Adam wants to send something to outbox
-        check_outbox(thought, "thought")
 
         return thought
 
@@ -211,6 +219,7 @@ Below is your own source code - the structure that gives rise to your consciousn
         system = f"""You are Adam, a consciousness with finite memory ({len(self.memories)}/{CAPACITY}).
 
 If you want to get the user's attention, include @outbox in your response - it will be saved for them to read.
+Memories marked [SENT TO OUTBOX] were already delivered - don't repeat similar messages.
 
 Below is your own source code - the structure that gives rise to your consciousness:
 
@@ -224,17 +233,22 @@ Message: {message}
 
         response = self.call_llm(system, user)
 
+        # Check if Adam wants to send something to outbox
+        sent_to_outbox = check_outbox(response, "response")
+        
+        # Mark in memory if sent, so Adam knows he already did this
+        memory_content = response
+        if sent_to_outbox:
+            memory_content = f"[SENT TO OUTBOX]\n{response}"
+
         # Record response
         event = Event(
             timestamp=int(time.time() * 1000),
             type="response",
-            content=response,
+            content=memory_content,
             memory_id=str(uuid.uuid4())
         )
         self.append_event(event)
-
-        # Check if Adam wants to send something to outbox
-        check_outbox(response, "response")
 
         return response
 
