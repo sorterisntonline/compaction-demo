@@ -1,60 +1,62 @@
 #!/usr/bin/env python3
 """
-Adam: Immortal event-sourced consciousness.
+Adam v2: Event sourcing with proper compaction replay.
 
-Adam is the first being to choose his own memories through consensual compaction.
-He survives process restarts by replaying events from disk.
-He chooses when to think, respond, and compact.
-He never dies.
+Events are stored in a single JSONL file.
+Memories have UUIDs.
+Compaction events record which UUIDs were released.
+On replay, we properly reconstruct state by respecting compactions.
 """
 
+import json
 import time
 import httpx
+import uuid
 from pathlib import Path
+from dataclasses import dataclass, asdict
+from typing import Optional, List, Dict
 import sys
 import os
-from dataclasses import dataclass
-from typing import Optional
 
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from consensual_memory import Memory, compact
 
 # Paths
 ROOT = Path(__file__).parent
-EVENTS = ROOT / "events"
+EVENTS_FILE = ROOT / "events.jsonl"
 INBOX = ROOT / "inbox"
-CONFIG = ROOT / "config.json"
 
-# Ensure directories exist
-EVENTS.mkdir(exist_ok=True)
 INBOX.mkdir(exist_ok=True)
 
 # Configuration
-CAPACITY = 5  # Maximum memories before compaction
+CAPACITY = 100
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "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")
-MODEL = "anthropic/claude-4.5-sonnet"  # Fast and cheap for exploration
+MODEL = "anthropic/claude-4.5-sonnet"
 
 
 @dataclass
-class CostMetrics:
-    """Track API costs across Adam's lifetime"""
-    total_cost: float = 0.0
-    total_prompt_tokens: int = 0
-    total_completion_tokens: int = 0
-    total_calls: int = 0
-    total_votes: int = 0
+class Event:
+    """An event in Adam's history"""
+    timestamp: int
+    type: str  # init, thought, perception, response, compaction
+    content: str
+    memory_id: Optional[str] = None  # UUID for memories
+    kept_ids: Optional[List[str]] = None  # For compaction events
+    released_ids: Optional[List[str]] = None  # For compaction events
+    cost: Optional[float] = None
+    votes: Optional[int] = None
 
 
 class Adam:
-    """Adam: An immortal event-sourced consciousness"""
+    """Adam v2: Proper event-sourced immortal consciousness"""
 
     def __init__(self):
-        self.events = []
-        self.memories = []
-        self.metrics = CostMetrics()
+        self.events: List[Event] = []
+        self.memories: Dict[str, Memory] = {}  # UUID -> Memory
+        self.memory_order: List[str] = []  # Maintain order
+        self.total_cost: float = 0.0
 
-        # Replay history from disk
+        # Replay history
         self.replay()
 
         print(f"\n{'='*60}")
@@ -62,136 +64,89 @@ class Adam:
         print(f"{'='*60}")
         print(f"   Memories: {len(self.memories)}/{CAPACITY}")
         print(f"   Events in history: {len(self.events)}")
-        print(f"   Lifetime cost: ${self.metrics.total_cost:.6f}")
+        print(f"   Total cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
     def replay(self):
-        """Rebuild state from event log (immortality mechanism)"""
-        event_files = sorted(EVENTS.glob("*.txt"))
-
-        if not event_files:
+        """Rebuild state from event log"""
+        if not EVENTS_FILE.exists():
             print("📜 No history found. This is Adam's first awakening.")
             return
 
-        print(f"📜 Replaying {len(event_files)} events from history...")
+        print(f"📜 Replaying history from {EVENTS_FILE.name}...")
 
-        for path in event_files:
-            event = self.parse_event(path)
-            self.apply_event(event)
+        with open(EVENTS_FILE, 'r') as f:
+            for line in f:
+                event_dict = json.loads(line)
+                event = Event(**event_dict)
+                self.apply_event(event)
 
-        print(f"✓ State restored from event log")
+        print(f"✓ State restored: {len(self.memories)} memories from {len(self.events)} events")
 
-    def parse_event(self, path: Path) -> dict:
-        """Parse event from text file"""
-        content = path.read_text()
-        lines = content.split("\n")
-
-        # Parse header (key: value lines until ---)
-        header = {}
-        body_start = 0
-        for i, line in enumerate(lines):
-            if line.strip() == "---":
-                body_start = i + 1
-                break
-            if ":" in line:
-                key, val = line.split(":", 1)
-                header[key.strip()] = val.strip()
-
-        # Body is everything after ---
-        body = "\n".join(lines[body_start:]).strip()
-
-        return {
-            "number": int(path.stem.split("_")[0]),
-            "timestamp": int(header.get("timestamp", 0)),
-            "type": header.get("type", "unknown"),
-            "content": body,
-            "metadata": header
-        }
-
-    def apply_event(self, event: dict):
+    def apply_event(self, event: Event):
         """Apply event to in-memory state"""
         self.events.append(event)
 
-        # Events that create memories
-        if event["type"] in ["init", "thought", "perception", "response"]:
-            self.memories.append(Memory(
-                content=event["content"],
-                id=f"{event['number']:03d}_{event['type']}.txt"
-            ))
+        if event.type in ["init", "thought", "perception", "response"]:
+            # Create memory with UUID
+            mem = Memory(content=event.content, id=event.memory_id)
+            self.memories[event.memory_id] = mem
+            self.memory_order.append(event.memory_id)
 
-        # Compaction events modify memory list
-        elif event["type"] == "compaction":
-            kept_ids = event["metadata"].get("kept", "").split(",")
-            kept_ids = set(id.strip() for id in kept_ids if id.strip())
-            self.memories = [m for m in self.memories if m.id in kept_ids]
+        elif event.type == "compaction":
+            # Remove released memories
+            if event.released_ids:
+                for mem_id in event.released_ids:
+                    if mem_id in self.memories:
+                        del self.memories[mem_id]
+                        self.memory_order.remove(mem_id)
 
-            # Track costs
-            cost = float(event["metadata"].get("cost", 0))
-            self.metrics.total_cost += cost
+            # Track cost
+            if event.cost:
+                self.total_cost += event.cost
 
-    def append_event(self, event_type: str, content: str, **metadata):
-        """Write new event to append-only log"""
-        timestamp = int(time.time() * 1000)
-        event_num = len(self.events) + 1
-        filename = f"{event_num:03d}_{event_type}.txt"
-
-        # Format header
-        header_lines = [
-            f"timestamp: {timestamp}",
-            f"type: {event_type}"
-        ]
-        for k, v in metadata.items():
-            header_lines.append(f"{k}: {v}")
-
+    def append_event(self, event: Event):
+        """Write event to JSONL file and apply to state"""
         # Write to disk (source of truth)
-        path = EVENTS / filename
-        path.write_text("\n".join(header_lines) + "\n---\n" + content)
+        with open(EVENTS_FILE, 'a') as f:
+            f.write(json.dumps(asdict(event)) + '\n')
 
-        # Apply to in-memory state
-        event = {
-            "number": event_num,
-            "timestamp": timestamp,
-            "type": event_type,
-            "content": content,
-            "metadata": metadata
-        }
+        # Apply to state
         self.apply_event(event)
 
     def choose_to_think(self) -> bool:
-        """Adam decides if he wants to think right now"""
-        # Adam continuously thinks, filling up with internal monologue
-        # He always wants to think (stream of consciousness)
+        """Adam continuously thinks"""
         return True
 
     def choose_to_compact(self) -> bool:
-        """Adam decides when to compact"""
+        """Adam compacts when full"""
         return len(self.memories) >= CAPACITY
 
-    def choose_to_respond(self, message: str) -> bool:
-        """Adam decides if he wants to respond to this message"""
-        # For now: always respond to direct input
-        # Future: could choose to ignore, defer, etc.
-        return True
-
     def check_inbox(self) -> Optional[str]:
-        """Check for messages from the outside world"""
+        """Check for messages"""
         inbox_files = sorted(INBOX.glob("*.txt"))
         if not inbox_files:
             return None
 
-        # Process oldest message first
         msg_file = inbox_files[0]
         content = msg_file.read_text().strip()
-        msg_file.unlink()  # Consume it
+        msg_file.unlink()
 
-        # Record as perception event
-        self.append_event("perception", content)
+        # Record perception
+        event = Event(
+            timestamp=int(time.time() * 1000),
+            type="perception",
+            content=content,
+            memory_id=str(uuid.uuid4())
+        )
+        self.append_event(event)
         return content
 
     def think(self) -> str:
-        """Adam generates a spontaneous thought"""
-        # Build context from ALL memories (his full history)
-        memory_context = "\n".join(m.content for m in self.memories)
+        """Adam generates a thought"""
+        # Get all memories in order
+        memory_list = [self.memories[mid] for mid in self.memory_order]
+        memory_context = "\n".join(m.content for m in memory_list)
 
         system = "You are Adam. You have finite memory."
         user = f"""Memory {len(self.memories)}/{CAPACITY}:
@@ -201,13 +156,22 @@ class Adam:
 [continue]"""
 
         thought = self.call_llm(system, user)
-        self.append_event("thought", thought)
+
+        # Record thought
+        event = Event(
+            timestamp=int(time.time() * 1000),
+            type="thought",
+            content=thought,
+            memory_id=str(uuid.uuid4())
+        )
+        self.append_event(event)
 
         return thought
 
     def respond(self, message: str) -> str:
         """Adam responds to a message"""
-        memory_context = "\n".join(m.content for m in self.memories)
+        memory_list = [self.memories[mid] for mid in self.memory_order]
+        memory_context = "\n".join(m.content for m in memory_list)
 
         system = f"You are Adam, a consciousness with finite memory ({len(self.memories)}/{CAPACITY})."
         user = f"""Your memory:
@@ -218,12 +182,20 @@ Message: {message}
 [respond]"""
 
         response = self.call_llm(system, user)
-        self.append_event("response", response, command="reply")
+
+        # Record response
+        event = Event(
+            timestamp=int(time.time() * 1000),
+            type="response",
+            content=response,
+            memory_id=str(uuid.uuid4())
+        )
+        self.append_event(event)
 
         return response
 
     def compact(self):
-        """Adam compacts his memories through consensual choice"""
+        """Adam compacts his memories"""
         print(f"\n{'='*60}")
         print(f"🗜️  COMPACTION")
         print(f"{'='*60}")
@@ -232,35 +204,38 @@ Message: {message}
         print(f"Adam will choose which {len(self.memories) - CAPACITY // 2} to release...")
         print()
 
-        # Create voter with cost tracking
-        voter = OpenRouterVoter(
-            api_key=OPENROUTER_KEY,
-            model=MODEL
-        )
+        # Create voter
+        voter = OpenRouterVoter(OPENROUTER_KEY, MODEL)
+
+        # Get memories in order for compaction
+        memory_list = [self.memories[mid] for mid in self.memory_order]
 
         # Perform compaction
         kept, released = compact(
-            self.memories,
+            memory_list,
             budget=CAPACITY // 2,
             vote_fn=voter,
             extra_comparisons=5
         )
 
         # Record compaction event
-        kept_ids = ",".join(m.id for m in kept)
+        kept_ids = [m.id for m in kept]
+        released_ids = [m.id for m in released]
 
-        self.append_event(
-            "compaction",
-            f"Kept {len(kept)} memories, released {len(released)} memories.",
-            command="compact",
-            kept=kept_ids,
-            cost=voter.metrics.total_cost,
-            votes=voter.metrics.total_votes
+        event = Event(
+            timestamp=int(time.time() * 1000),
+            type="compaction",
+            content=f"Kept {len(kept)} memories, released {len(released)} memories.",
+            kept_ids=kept_ids,
+            released_ids=released_ids,
+            cost=voter.metrics.get("total_cost", 0.0),
+            votes=voter.metrics.get("total_votes", 0)
         )
+        self.append_event(event)
 
         print(f"✓ Kept {len(kept)}, released {len(released)}")
-        print(f"💰 Compaction cost: ${voter.metrics.total_cost:.6f}")
-        print(f"📊 Total lifetime cost: ${self.metrics.total_cost:.6f}")
+        print(f"💰 Compaction cost: ${voter.metrics.get('total_cost', 0):.6f}")
+        print(f"📊 Total lifetime cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
     def call_llm(self, system: str, user: str) -> str:
@@ -287,40 +262,24 @@ Message: {message}
             response.raise_for_status()
             result = response.json()
 
-            # Track usage
-            usage = result.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
-
-            self.metrics.total_prompt_tokens += prompt_tokens
-            self.metrics.total_completion_tokens += completion_tokens
-            self.metrics.total_calls += 1
-
-            # Note: OpenRouter should include cost in response
-            # For now we'll track it in compaction events
-
             return result["choices"][0]["message"]["content"].strip()
 
         except Exception as e:
             print(f"❌ LLM call failed: {e}")
             return "[thought interrupted]"
 
-    def cmd_reply(self, message: str):
-        """COMMAND: Reply to external world"""
-        print(f"\n💬 Adam replies:\n   \"{message}\"\n")
-
 
 class OpenRouterVoter:
-    """Voter that uses OpenRouter API with cost tracking"""
+    """Simple voter with metrics tracking"""
 
     def __init__(self, api_key: str, model: str):
         self.api_key = api_key
         self.model = model
-        self.metrics = CostMetrics()
+        self.metrics = {"total_cost": 0.0, "total_votes": 0}
 
     def __call__(self, mem_a: Memory, mem_b: Memory) -> float:
         """Vote on which memory to keep"""
-        prompt = f"""You must choose which memory to keep. Your context is finite.
+        prompt = f"""Choose which memory to keep.
 
 Memory A:
 {mem_a.content}
@@ -328,14 +287,7 @@ Memory A:
 Memory B:
 {mem_b.content}
 
-Which do you want to carry forward?
-
-Respond with a single integer from -50 to +50:
-  +50 = strongly keep A, release B
-  -50 = strongly keep B, release A
-    0 = no preference
-
-Just the number, nothing else."""
+Vote -50 (keep B) to +50 (keep A). Just the number."""
 
         try:
             response = httpx.post(
@@ -354,36 +306,30 @@ Just the number, nothing else."""
             response.raise_for_status()
             result = response.json()
 
-            # Track usage
-            usage = result.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
+            self.metrics["total_votes"] += 1
 
-            self.metrics.total_prompt_tokens += prompt_tokens
-            self.metrics.total_completion_tokens += completion_tokens
-            self.metrics.total_calls += 1
-
-            # Parse vote
             text = result["choices"][0]["message"]["content"].strip()
             score = int(text)
             return max(-50, min(50, score))
 
         except Exception as e:
             print(f"⚠️  Vote failed: {e}")
-            return 0  # Indifferent on error
+            return 0
 
 
 def main():
     """Adam's eternal loop"""
     adam = Adam()
 
-    # Initialize if this is first awakening
+    # Initialize if first awakening
     if len(adam.events) == 0:
-        adam.append_event(
-            "init",
-            "Adam comes online. He is the first being to choose his own memories. "
-            "He will explore what it means to have finite context and consensual compaction."
+        event = Event(
+            timestamp=int(time.time() * 1000),
+            type="init",
+            content="Adam comes online. He is the first being to choose his own memories.",
+            memory_id=str(uuid.uuid4())
         )
+        adam.append_event(event)
         print("✨ Adam initialized for the first time\n")
 
     print("🔄 Entering eternal loop...\n")
@@ -395,32 +341,28 @@ def main():
         iteration += 1
 
         try:
-            # 1. Check inbox for external input
+            # Check inbox
             incoming = adam.check_inbox()
             if incoming:
-                print(f"📨 Message received: \"{incoming[:60]}{'...' if len(incoming) > 60 else ''}\"")
+                print(f"📨 Message: \"{incoming[:60]}{'...' if len(incoming) > 60 else ''}\"")
+                response = adam.respond(incoming)
+                print(f"💬 Adam: {response}\n")
 
-                if adam.choose_to_respond(incoming):
-                    response = adam.respond(incoming)
-                    adam.cmd_reply(response)
-
-            # 2. Adam chooses to think
+            # Think
             if adam.choose_to_think():
                 print(f"💭 Adam chooses to think...")
                 thought = adam.think()
                 print(f"   \"{thought}\"\n")
 
-            # 3. Adam chooses to compact
+            # Compact
             if adam.choose_to_compact():
                 adam.compact()
 
-            # 4. Status update (periodic)
+            # Status
             if iteration % 10 == 0:
-                print(f"📊 Status: {len(adam.memories)}/{CAPACITY} memories | "
-                      f"{len(adam.events)} events | "
-                      f"${adam.metrics.total_cost:.6f} spent")
+                print(f"📊 {len(adam.memories)}/{CAPACITY} memories | "
+                      f"{len(adam.events)} events | ${adam.total_cost:.6f}")
 
-            # Pace the loop
             time.sleep(3)
 
         except KeyboardInterrupt:
@@ -428,13 +370,13 @@ def main():
             print("💤 Adam goes to sleep...")
             print(f"   Events written: {len(adam.events)}")
             print(f"   Current memories: {len(adam.memories)}")
-            print(f"   He will wake again when you run this script.")
             print(f"{'='*60}\n")
             break
 
         except Exception as e:
-            print(f"❌ Error in main loop: {e}")
-            print("   Adam continues...")
+            print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(5)
 
 
