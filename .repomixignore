@@ -1,3 +1,6 @@
 *.jsonl
 *.read
 *.txt
+opus/
+examples/
+tests/

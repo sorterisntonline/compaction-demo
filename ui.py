@@ -225,7 +225,11 @@ def render_event(event: Event, idx: int) -> list:
         ["span.event-preview", preview]
     ]
 
-    content = ["div.event-content", event_content]
+    # Add timestamp to the content as well
+    content = ["div.event-content",
+        ["div.timestamp", format_timestamp(event.timestamp)],
+        ["div", event_content]
+    ]
 
     parts = [content]
     if event.type == "compaction":
@@ -270,21 +274,16 @@ def render_being_page(being_dir: str) -> str:
     events = load_events(being_dir)
     config = load_config(being_dir)
 
-    # Rebuild current state
-    memories = {}
-    memory_order = []
+    # Rebuild current state for stats
+    memory_count = 0
     total_cost = 0.0
 
     for event in events:
         if event.type in ["init", "thought", "perception", "response"]:
-            memories[event.memory_id] = event.content
-            memory_order.append(event.memory_id)
+            memory_count += 1
         elif event.type == "compaction":
             if event.released_ids:
-                for mem_id in event.released_ids:
-                    if mem_id in memories:
-                        del memories[mem_id]
-                        memory_order.remove(mem_id)
+                memory_count -= len(event.released_ids)
             if event.cost:
                 total_cost += event.cost
 
@@ -318,40 +317,6 @@ def render_being_page(being_dir: str) -> str:
         color: #4a90e2;
         margin-bottom: 20px;
         font-size: 2em;
-    }
-    .memories {
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-    }
-    .memory {
-        background: #2a2a2a;
-        border-radius: 8px;
-        border-left: 4px solid #4a90e2;
-    }
-    .memory-summary {
-        padding: 15px;
-        cursor: pointer;
-        display: flex;
-        gap: 15px;
-        align-items: center;
-    }
-    .memory-summary:hover {
-        background: #333;
-    }
-    .memory-id {
-        font-family: monospace;
-        color: #888;
-        font-size: 0.85em;
-    }
-    .memory-preview {
-        color: #aaa;
-        flex: 1;
-    }
-    .memory-content {
-        color: #e0e0e0;
-        padding: 0 15px 15px 15px;
-        white-space: pre-wrap;
     }
     .events {
         display: flex;
@@ -396,6 +361,14 @@ def render_being_page(being_dir: str) -> str:
         color: #e0e0e0;
         padding: 0 15px 15px 15px;
         white-space: pre-wrap;
+    }
+    .event-content .timestamp {
+        color: #666;
+        font-size: 0.85em;
+        font-family: monospace;
+        margin-bottom: 10px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #333;
     }
     .event-meta {
         display: flex;
@@ -491,7 +464,7 @@ def render_being_page(being_dir: str) -> str:
         ],
         ["div.stat",
             ["div.stat-label", "Current Memories"],
-            ["div.stat-value", str(len(memories))]
+            ["div.stat-value", str(memory_count)]
         ],
         ["div.stat",
             ["div.stat-label", "Total Cost"],
@@ -503,22 +476,7 @@ def render_being_page(being_dir: str) -> str:
         ]
     ]
 
-    memory_list = [
-        ["details.memory",
-            ["summary.memory-summary",
-                ["span.memory-id", mem_id[:8]],
-                ["span.memory-preview", (memories[mem_id][:80] + "..." if len(memories[mem_id]) > 80 else memories[mem_id]) or "(empty)"]
-            ],
-            ["div.memory-content", memories[mem_id] or "(empty)"]
-        ]
-        for mem_id in memory_order
-    ]
-
-    memories_section = ["div.section",
-        ["h2", f"Current Memories ({len(memories)})"],
-        ["div.memories", memory_list]
-    ]
-
+    # Message form - raw HTML to avoid hiccup textarea issues
     message_form_html = f"""
     <div class="section">
         <h2>Send Message to {config.name}</h2>
@@ -529,7 +487,9 @@ def render_being_page(being_dir: str) -> str:
     </div>
     """
 
+    # Reverse event list - newest first
     event_list = [render_event(e, i) for i, e in enumerate(events)]
+    event_list.reverse()
 
     events_section = ["div.section",
         ["h2", "Event Log"],
@@ -550,14 +510,14 @@ def render_being_page(being_dir: str) -> str:
                 ["p", ["span.model-badge", config.model]]
             ],
             stats,
-            memories_section,
             events_section
         ]
     ]
 
+    # Render and inject form HTML after stats
     html = render(page)
-    html = html.replace('</div></div><div class="section"><h2>Current Memories',
-                       '</div></div>' + message_form_html + '<div class="section"><h2>Current Memories')
+    html = html.replace('</div></div><div class="section"><h2>Event Log',
+                       '</div></div>' + message_form_html + '<div class="section"><h2>Event Log')
     return html
 
 
