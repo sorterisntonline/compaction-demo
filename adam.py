@@ -110,6 +110,7 @@ class Being:
         # State
         self.events: List[Event] = []
         self.memories: Dict[str, Memory] = {}  # UUID -> Memory
+        self.memory_types: Dict[str, str] = {}  # UUID -> event type (for rendering)
         self.memory_order: List[str] = []  # Maintain order
         self.total_cost: float = 0.0
 
@@ -150,6 +151,7 @@ class Being:
             # Create memory with UUID
             mem = Memory(content=event.content, id=event.memory_id)
             self.memories[event.memory_id] = mem
+            self.memory_types[event.memory_id] = event.type
             self.memory_order.append(event.memory_id)
 
         elif event.type == "compaction":
@@ -158,6 +160,7 @@ class Being:
                 for mem_id in event.released_ids:
                     if mem_id in self.memories:
                         del self.memories[mem_id]
+                        del self.memory_types[mem_id]
                         self.memory_order.remove(mem_id)
 
             # Track cost
@@ -172,6 +175,16 @@ class Being:
 
         # Apply to state
         self.apply_event(event)
+
+    def render_memory(self, memory_id: str) -> str:
+        """Render a memory with appropriate XML guards based on its type"""
+        mem = self.memories[memory_id]
+        mem_type = self.memory_types.get(memory_id, "thought")
+        
+        if mem_type == "perception":
+            return f"<inbox_message>\n{mem.content}\n</inbox_message>"
+        else:
+            return mem.content
 
     def choose_to_think(self) -> bool:
         """Being continuously thinks"""
@@ -194,7 +207,11 @@ class Being:
         read_file = msg_file.with_suffix('.read')
         msg_file.rename(read_file)
 
-        # Record perception
+        # Skip empty messages
+        if not content:
+            return None
+
+        # Record perception (raw content, XML added at render time)
         event = Event(
             timestamp=int(time.time() * 1000),
             type="perception",
@@ -206,9 +223,8 @@ class Being:
 
     def think(self) -> Optional[str]:
         """Being generates a thought. Returns None if failed."""
-        # Get all memories in order
-        memory_list = [self.memories[mid] for mid in self.memory_order]
-        memory_context = "\n".join(m.content for m in memory_list)
+        # Get all memories in order, rendered with XML guards where appropriate
+        memory_context = "\n".join(self.render_memory(mid) for mid in self.memory_order)
 
         # Add variation to avoid repetition
         import random
@@ -259,8 +275,8 @@ Memory {len(self.memories)}/{self.config.capacity}:
 
     def respond(self, message: str) -> Optional[str]:
         """Being responds to a message. Returns None if failed."""
-        memory_list = [self.memories[mid] for mid in self.memory_order]
-        memory_context = "\n".join(m.content for m in memory_list)
+        # Get all memories rendered with XML guards where appropriate
+        memory_context = "\n".join(self.render_memory(mid) for mid in self.memory_order)
 
         # Current time for the being
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -551,6 +567,12 @@ def main():
     iteration = 0
 
     while True:
+        # Check if we've done enough iterations
+        if max_iterations and iteration >= max_iterations:
+            print(f"📊 {len(being.memories)}/{being.config.capacity} memories | "
+                  f"{len(being.events)} events | {iteration} cycles completed")
+            break
+
         iteration += 1
 
         try:
@@ -576,12 +598,6 @@ def main():
             # Compact
             if being.choose_to_compact():
                 being.compact()
-
-            # Exit after N cycles if --one or --count
-            if max_iterations and iteration >= max_iterations:
-                print(f"📊 {len(being.memories)}/{being.config.capacity} memories | "
-                      f"{len(being.events)} events | {iteration} cycles completed")
-                break
 
             # Status
             if iteration % 10 == 0:
