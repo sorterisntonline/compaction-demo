@@ -573,21 +573,24 @@ def main():
                   f"{len(being.events)} events | {iteration} cycles completed")
             break
 
-        iteration += 1
-
         try:
-            # Check messages
+            # Check messages first - counts as an iteration if there is one
             incoming = being.check_messages()
             if incoming:
+                iteration += 1
                 print(f"📨 Message: \"{incoming[:60]}{'...' if len(incoming) > 60 else ''}\"")
                 response = being.respond(incoming)
                 if response:
                     print(f"💬 {being.config.name}: {response}\n")
                 else:
                     print(f"   (response failed, not recorded)\n")
+                # If we've hit our limit after handling message, don't also think
+                if max_iterations and iteration >= max_iterations:
+                    continue
 
-            # Think
+            # Think (counts as an iteration)
             if being.choose_to_think():
+                iteration += 1
                 print(f"💭 {being.config.name} chooses to think...")
                 thought = being.think()
                 if thought:
