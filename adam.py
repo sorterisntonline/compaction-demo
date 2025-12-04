@@ -86,7 +86,6 @@ class Event:
     memory_id: Optional[str] = None  # UUID for memories
     kept_ids: Optional[List[str]] = None  # For compaction events
     released_ids: Optional[List[str]] = None  # For compaction events
-    cost: Optional[float] = None
     votes: Optional[int] = None
     vote_log: Optional[List[dict]] = None  # Detailed vote records for UI
 
@@ -112,7 +111,6 @@ class Being:
         self.memories: Dict[str, Memory] = {}  # UUID -> Memory
         self.memory_types: Dict[str, str] = {}  # UUID -> event type (for rendering)
         self.memory_order: List[str] = []  # Maintain order
-        self.total_cost: float = 0.0
 
         # Replay history
         self.replay()
@@ -124,7 +122,6 @@ class Being:
         print(f"   Memories: {len(self.memories)}/{self.config.capacity}")
         print(f"   Events in history: {len(self.events)}")
         print(f"   Codebase loaded: {len(CODEBASE):,} chars" if CODEBASE else "   Codebase: not found")
-        print(f"   Total cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
     def replay(self):
@@ -162,10 +159,6 @@ class Being:
                         del self.memories[mem_id]
                         del self.memory_types[mem_id]
                         self.memory_order.remove(mem_id)
-
-            # Track cost
-            if event.cost:
-                self.total_cost += event.cost
 
     def append_event(self, event: Event):
         """Write event to JSONL file and apply to state"""
@@ -351,15 +344,12 @@ Message: {message}
             content=f"Kept {len(kept)} memories, released {len(released)} memories.",
             kept_ids=kept_ids,
             released_ids=released_ids,
-            cost=voter.metrics.get("total_cost", 0.0),
             votes=voter.metrics.get("total_votes", 0),
             vote_log=voter.vote_log
         )
         self.append_event(event)
 
         print(f"✓ Kept {len(kept)}, released {len(released)}")
-        print(f"💰 Compaction cost: ${voter.metrics.get('total_cost', 0):.6f}")
-        print(f"📊 Total lifetime cost: ${self.total_cost:.6f}")
         print(f"{'='*60}\n")
 
     def call_llm(self, system: str, user: str, temperature: float = 0.7) -> Optional[str]:
@@ -403,7 +393,7 @@ class OpenRouterVoter:
         self.codebase = codebase
         self.name = name
         self.total_comparisons = total_comparisons
-        self.metrics = {"total_cost": 0.0, "total_votes": 0}
+        self.metrics = {"total_votes": 0}
         self.vote_log: List[dict] = []  # Record all votes for UI
 
     def __call__(self, mem_a: Memory, mem_b: Memory) -> float:
@@ -605,7 +595,7 @@ def main():
             # Status
             if iteration % 10 == 0:
                 print(f"📊 {len(being.memories)}/{being.config.capacity} memories | "
-                      f"{len(being.events)} events | ${being.total_cost:.6f}")
+                      f"{len(being.events)} events")
 
             time.sleep(3)
 
