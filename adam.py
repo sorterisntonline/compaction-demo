@@ -27,7 +27,6 @@ import httpx
 
 from consensual_memory.rank import rank_from_comparisons
 from schema import Init, Thought, Perception, Response, Vote, Compaction, from_dict, to_dict
-from specter import P, ALL, TYPE
 
 ROOT = Path(__file__).parent
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -38,8 +37,8 @@ def ts() -> int:
 
 
 def current_memories(being):
-    """Read from PState."""
-    return list(being.current.values())
+    """Read from PState, sorted by timestamp."""
+    return sorted(being.current.values(), key=lambda e: e.ts)
 
 
 def vote_cache(being):
@@ -55,23 +54,21 @@ class Being:
     events: list = field(default_factory=list)
     # PStates (materialized, incrementally updated)
     votes: dict = field(default_factory=dict)
-    released: set = field(default_factory=set)
     current: dict = field(default_factory=dict)  # id -> event
 
 
 # --- ETL (paths only) ---
 
 def apply_event(being, event):
-    """ETL: Update PStates via paths."""
+    """ETL: Update PStates."""
     match event:
         case Vote(_, a_id, b_id, score):
-            P[being].votes[frozenset({a_id, b_id})] = score
+            being.votes[frozenset({a_id, b_id})] = score
         case Compaction(_, _, released_ids):
-            P[being].released |= set(released_ids)
             for rid in released_ids:
-                del P[being].current[rid]
+                del being.current[rid]
         case Init() | Thought() | Perception() | Response():
-            P[being].current[event.id] = event
+            being.current[event.id] = event
 
 
 # --- Queries (just read PStates) ---
