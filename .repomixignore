@@ -4,3 +4,9 @@
 opus/
 examples/
 tests/
+.repomixignore
+static/style.css
+pyproject.toml
+consensual_memory/__init__.py
+.claude/settings.local.json
+.gitignore
