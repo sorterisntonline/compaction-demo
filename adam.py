@@ -72,6 +72,8 @@ def apply_event(being, event):
                 del being.current[rid]
         case Init():
             being.capacity = event.capacity
+            if event.model:
+                being.model = event.model
             being.current[event.id] = event
         case Thought() | Perception() | Response():
             being.current[event.id] = event
@@ -227,10 +229,10 @@ def main():
     a = p.parse_args()
     
     being = load(a.events, a.model)
-    # New being - create Init with capacity
+    # New being - create Init with capacity and model
     if not being.events:
-        append(being, Init(ts(), "I awaken.", str(uuid.uuid4()), a.capacity))
-    print(f"🧠 {a.events} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
+        append(being, Init(ts(), "", str(uuid.uuid4()), a.capacity, a.model))
+    print(f"🧠 {a.events} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
     
     if a.compact:
         compact(being)

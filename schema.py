@@ -19,7 +19,8 @@ class Init:
     timestamp: int
     content: str
     id: str
-    capacity: int
+    capacity: int = 100
+    model: str = ""
 
 
 @event

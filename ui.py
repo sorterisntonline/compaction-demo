@@ -6,7 +6,7 @@ Consensual Memory UI: FastAPI server for visualizing beings' event logs and memo
 import json
 from pathlib import Path
 from typing import List
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from datetime import datetime
 
 from fastapi import FastAPI
@@ -16,68 +16,53 @@ from python_hiccup.html import render
 
 from schema import Event, Init, Thought, Perception, Response, Vote, Compaction, from_dict
 
-
-@dataclass
-class Config:
-    name: str = "unknown"
-    model: str = "unknown"
-    capacity: int = 100
-    
-    @classmethod
-    def load(cls, path: Path) -> "Config":
-        if path.exists():
-            data = json.loads(path.read_text())
-            return cls(
-                name=data.get("name", path.parent.name),
-                model=data.get("model", "unknown"),
-                capacity=data.get("capacity", 100)
-            )
-        return cls(name=path.parent.name)
-
 # Root of the project
 ROOT = Path(__file__).parent
+BEINGS_DIR = ROOT  # Set via CLI
 
 app = FastAPI(title="Consensual Memory Viewer")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
 def find_beings() -> List[dict]:
-    """Find all being directories (those with config.json or events.jsonl)"""
+    """Find all .jsonl files in beings directory"""
     beings = []
-    for path in ROOT.iterdir():
-        if path.is_dir() and not path.name.startswith('.') and not path.name.startswith('_'):
-            config_file = path / "config.json"
-            events_file = path / "events.jsonl"
-            if config_file.exists() or events_file.exists():
-                config = Config.load(config_file)
-                # Count events
-                event_count = 0
-                if events_file.exists():
-                    with open(events_file) as f:
-                        event_count = sum(1 for _ in f)
-                beings.append({
-                    "dir": path.name,
-                    "name": config.name,
-                    "model": config.model,
-                    "capacity": config.capacity,
-                    "events": event_count
-                })
-    return sorted(beings, key=lambda b: b["name"])
+    for path in BEINGS_DIR.glob("*.jsonl"):
+        if path.name.startswith('.'):
+            continue
+        events = load_events_from_path(path)
+        if not events:
+            continue
+        # Get model/capacity from Init event
+        init = next((e for e in events if isinstance(e, Init)), None)
+        model = getattr(init, 'model', 'unknown') if init else 'unknown'
+        capacity = getattr(init, 'capacity', 100) if init else 100
+        beings.append({
+            "file": path.stem,
+            "path": path.name,
+            "model": model or 'unknown',
+            "capacity": capacity,
+            "events": len(events)
+        })
+    return sorted(beings, key=lambda b: b["file"])
 
 
-def load_events(being_dir: str) -> List[Event]:
-    """Load all events from JSONL"""
-    events_file = ROOT / being_dir / "events.jsonl"
-    if not events_file.exists():
+def load_events_from_path(path: Path) -> List[Event]:
+    """Load all events from JSONL file"""
+    if not path.exists():
         return []
-
     events = []
-    with open(events_file, 'r') as f:
+    with open(path, 'r') as f:
         for line in f:
             if line.strip():
                 event_dict = json.loads(line)
                 events.append(from_dict(event_dict))
     return events
+
+
+def load_events(being_file: str) -> List[Event]:
+    """Load events by filename"""
+    return load_events_from_path(ROOT / being_file)
 
 
 def event_type(event: Event) -> str:
@@ -97,12 +82,6 @@ def event_id(event: Event) -> str:
     if hasattr(event, 'id'):
         return event.id
     return ""
-
-
-def load_config(being_dir: str) -> Config:
-    """Load config for a being"""
-    config_file = ROOT / being_dir / "config.json"
-    return Config.load(config_file)
 
 
 def format_timestamp(ts: int) -> str:
@@ -126,9 +105,9 @@ def render_index() -> str:
     
     if beings:
         being_cards = [
-            ["a", {"href": f"/{b['dir']}/"},
+            ["a", {"href": f"/{b['file']}"},
                 ["div.being-card",
-                    ["h2", f"🧠 {b['dir']}"],
+                    ["h2", f"🧠 {b['file']}"],
                     ["div.being-meta",
                         ["span", ["span.being-model", b['model']]],
                         ["span", f"📊 {b['events']} events | capacity {b['capacity']}"]
@@ -140,8 +119,8 @@ def render_index() -> str:
         content = ["div.beings", *being_cards]
     else:
         content = ["div.no-beings",
-            ["p", "No models found."],
-            ["p", "Create one with: ", ["code", "python adam.py myname/ --name MyName"]]
+            ["p", "No beings found."],
+            ["p", "Create one with: ", ["code", "python adam.py myname.jsonl"]]
         ]
     
     page = ["html",
@@ -228,10 +207,11 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
     return ["details.event", {"id": f"event-{idx}"}, summary, *parts]
 
 
-def render_being_page(being_dir: str) -> str:
+def render_being_page(being_file: str) -> str:
     """Render the page for a specific being"""
-    events = load_events(being_dir)
-    config = load_config(being_dir)
+    events = load_events(being_file + ".jsonl")
+    init = next((e for e in events if isinstance(e, Init)), None)
+    model = getattr(init, 'model', 'unknown') if init else 'unknown'
 
     # Rebuild current state for stats
     memory_count = 0
@@ -280,12 +260,12 @@ def render_being_page(being_dir: str) -> str:
     ]
 
     page = ["html",
-        html_head(f"{being_dir} - Consensual Memory"),
+        html_head(f"{being_file} - Consensual Memory"),
         ["body",
             ["div.back-link", ["a", {"href": "/"}, "← All Beings"]],
             ["div.header",
-                ["h1", f"🧠 {being_dir}"],
-                ["p", ["span.model-badge", config.model]]
+                ["h1", f"🧠 {being_file}"],
+                ["p", ["span.model-badge", model]]
             ],
             stats,
             events_section
@@ -303,27 +283,28 @@ async def index():
     return render_index()
 
 
-@app.get("/{being_dir}/", response_class=HTMLResponse)
-async def view_being(being_dir: str):
+@app.get("/{being_file}", response_class=HTMLResponse)
+async def view_being(being_file: str):
     """View a specific being"""
-    data_dir = ROOT / being_dir
-    if not data_dir.exists():
+    events_path = ROOT / (being_file + ".jsonl")
+    if not events_path.exists():
         return RedirectResponse(url="/", status_code=303)
-    return render_being_page(being_dir)
+    return render_being_page(being_file)
 
 
-@app.get("/{being_dir}/api/events")
-async def get_events(being_dir: str):
+@app.get("/{being_file}/api/events")
+async def get_events(being_file: str):
     """Get events as JSON"""
-    events = load_events(being_dir)
+    events = load_events(being_file + ".jsonl")
     return [asdict(e) for e in events]
 
 
-@app.get("/{being_dir}/api/stats")
-async def get_stats(being_dir: str):
+@app.get("/{being_file}/api/stats")
+async def get_stats(being_file: str):
     """Get current stats"""
-    events = load_events(being_dir)
-    config = load_config(being_dir)
+    events = load_events(being_file + ".jsonl")
+    init = next((e for e in events if isinstance(e, Init)), None)
+    model = getattr(init, 'model', 'unknown') if init else 'unknown'
 
     memories = {}
 
@@ -336,8 +317,8 @@ async def get_stats(being_dir: str):
                     memories.pop(mem_id, None)
 
     return {
-        "name": config.name,
-        "model": config.model,
+        "file": being_file,
+        "model": model,
         "total_events": len(events),
         "current_memories": len(memories),
         "compactions": sum(1 for e in events if isinstance(e, Compaction))
@@ -345,6 +326,18 @@ async def get_stats(being_dir: str):
 
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
-    print("🌐 Starting Consensual Memory UI on http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("dir", type=Path, nargs="?", default=ROOT, help="Directory containing .jsonl files")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    
+    # Update module-level variable
+    import ui
+    ui.BEINGS_DIR = args.dir.resolve()
+    
+    print(f"🌐 Starting Consensual Memory UI on http://localhost:{args.port}")
+    print(f"📁 Serving beings from {ui.BEINGS_DIR}")
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
