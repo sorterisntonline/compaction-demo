@@ -334,10 +334,10 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     
-    # Update module-level variable
-    import ui
-    ui.BEINGS_DIR = args.dir.resolve()
+    # Update module-level variable in this module's namespace
+    import sys
+    sys.modules[__name__].BEINGS_DIR = args.dir.resolve()
     
     print(f"🌐 Starting Consensual Memory UI on http://localhost:{args.port}")
-    print(f"📁 Serving beings from {ui.BEINGS_DIR}")
+    print(f"📁 Serving beings from {BEINGS_DIR}")
     uvicorn.run(app, host="0.0.0.0", port=args.port)
