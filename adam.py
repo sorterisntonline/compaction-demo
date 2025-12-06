@@ -112,22 +112,9 @@ def build_prompt(being, tag: str = None) -> str:
     return prompt
 
 
-class FormatError(Exception):
-    """Model output didn't match expected format."""
-    pass
-
-
-def extract_tag(text: str, tag: str) -> str:
-    """Extract content from tag. Raises FormatError if malformed."""
-    end_tag = f"</{tag}>"
-    if end_tag not in text:
-        raise FormatError(f"Missing {end_tag} in output: {text[:200]}...")
-    content = text.split(end_tag)[0]
-    # Strip opening tag if model included it
-    start_tag = f"<{tag}>"
-    if start_tag in content:
-        content = content.split(start_tag)[-1]
-    return content.strip()
+def strip_tags(text: str) -> str:
+    """Strip all XML-like tags from output."""
+    return re.sub(r"</?(?:thought|response|message)>", "", text).strip()
 
 
 # --- Commands (effects) ---
@@ -175,7 +162,7 @@ def vote(being, a, b) -> int:
 
 def think(being) -> str:
     raw = llm(being, build_prompt(being, tag="thought"), temp=0.9)
-    thought = extract_tag(raw, "thought")
+    thought = strip_tags(raw)
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
 
@@ -183,7 +170,7 @@ def think(being) -> str:
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
     raw = llm(being, build_prompt(being, tag="response"))
-    response = extract_tag(raw, "response")
+    response = strip_tags(raw)
     append(being, Response(ts(), response, str(uuid.uuid4())))
     return response
 
@@ -311,7 +298,7 @@ def step(being) -> bool:
         case Perception():
             print(f"📨 Pending perception, generating response...")
             raw = llm(being, build_prompt(being, tag="response"))
-            response = extract_tag(raw, "response")
+            response = strip_tags(raw)
             append(being, Response(ts(), response, str(uuid.uuid4())))
             print(response)
             return True
