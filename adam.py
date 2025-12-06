@@ -41,13 +41,8 @@ def ts() -> int:
 
 
 def current_memories(being):
-    """Read from PState, sorted by timestamp."""
+    """Current memories, sorted by timestamp."""
     return sorted(being.current.values(), key=lambda e: e.timestamp)
-
-
-def vote_cache(being):
-    """Read from PState."""
-    return being.votes
 
 
 @dataclass
@@ -56,15 +51,12 @@ class Being:
     model: str
     capacity: int
     events: list = field(default_factory=list)
-    # PStates (materialized, incrementally updated)
-    votes: dict = field(default_factory=dict)
-    current: dict = field(default_factory=dict)  # id -> event
+    votes: dict = field(default_factory=dict)       # frozenset{a,b} -> score
+    current: dict = field(default_factory=dict)     # id -> memory event
 
-
-# --- ETL (paths only) ---
 
 def apply_event(being, event):
-    """ETL: Update PStates."""
+    """Update derived state from event."""
     match event:
         case Vote(vote_a_id=a_id, vote_b_id=b_id, vote_score=score):
             being.votes[frozenset({a_id, b_id})] = score
@@ -143,7 +135,7 @@ def llm(being, user: str, temp: float = 0.7) -> str:
 
 def vote(being, a, b) -> int:
     """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a)."""
-    votes = vote_cache(being)
+    votes = being.votes
     key = frozenset({a.id, b.id})
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
@@ -338,7 +330,7 @@ def cmd_init(args):
 def cmd_run(args):
     """Interact with existing being."""
     being = load(args.file)
-    print(f"🧠 {being.path} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
+    print(f"🧠 {being.path} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(being.votes)} votes")
     
     if args.compact:
         compact(being)
