@@ -86,9 +86,23 @@ def system_prompt(being):
     return f"You are a being with finite memory.\n\n{codebase.read_text()}"
 
 
+def format_memory(e):
+    """Format memory with identity tags."""
+    match e:
+        case Thought():
+            return f"<thought>{e.content}</thought>"
+        case Perception():
+            return f"<message>{e.content}</message>"
+        case Response():
+            return f"<response>{e.content}</response>"
+        case _:
+            return None  # Init etc. don't inject
+
+
 def build_prompt(being, suffix: str) -> str:
     current = current_memories(being)
-    ctx = "\n".join(e.content for e in current)
+    formatted = [format_memory(e) for e in current]
+    ctx = "\n\n".join(f for f in formatted if f)
     return f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory {len(current)}/{being.capacity}:\n\n{ctx}\n\n{suffix}"
 
 
