@@ -107,7 +107,7 @@ def build_prompt(being, tag: str = None) -> str:
     ctx = "\n\n".join(p for p in parts if p)
     prompt = f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
     if tag:
-        prompt += f"\n\n<{tag}>"
+        prompt += f"\n\nSpeak only for yourself. One turn.\n\n<{tag}>"
     return prompt
 
 
@@ -129,15 +129,17 @@ def append(being, event):
 def llm(being, user: str, temp: float = 0.7) -> str:
     if not being.model:
         raise ValueError(f"No model specified for {being.path}. Set 'model' field in Init event.")
+    print(f"⏳ {being.model}...", end="", flush=True)
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": being.model, "temperature": temp,
+        json={"model": being.model, "temperature": temp, "max_tokens": 4000,
               "messages": [{"role": "system", "content": system_prompt(being)},
                            {"role": "user", "content": user}]},
         timeout=120.0,
     )
     r.raise_for_status()
+    print("\r", end="")  # clear the waiting indicator
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
