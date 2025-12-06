@@ -92,12 +92,12 @@ def system_prompt(being):
 def format_memory(e) -> str | None:
     """Format memory with identity tags."""
     match e:
-        case Thought(content=c):
-            return f"<thought>{c}</thought>"
-        case Perception(content=c):
-            return f"<message>{c}</message>"
-        case Response(content=c):
-            return f"<response>{c}</response>"
+        case Thought(content=content):
+            return f"<thought>{content}</thought>"
+        case Perception(content=content):
+            return f"<message>{content}</message>"
+        case Response(content=content):
+            return f"<response>{content}</response>"
         case _:
             return None
 
@@ -243,6 +243,15 @@ def compact(being):
     append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
 
+def maybe_compact(being) -> bool:
+    """Compact if at capacity. Returns True if compacted."""
+    if len(current_memories(being)) >= being.capacity:
+        compact(being)
+        print(f"🗜️ → {len(current_memories(being))} memories")
+        return True
+    return False
+
+
 def load(path: Path, model: str) -> Being:
     being = Being(path, model)
     if path.exists():
@@ -305,9 +314,8 @@ def main():
         return
     
     if a.step:
-        if step(being) and len(current_memories(being)) >= being.capacity:
-            compact(being)
-            print(f"🗜️ → {len(current_memories(being))} memories")
+        step(being)
+        maybe_compact(being)
         return
     
     while True:
@@ -322,10 +330,7 @@ def main():
                     sys.exit(1)
             
             print(receive(being, msg))
-            
-            if len(current_memories(being)) >= being.capacity:
-                compact(being)
-                print(f"🗜️ → {len(current_memories(being))} memories")
+            maybe_compact(being)
             
             if not a.loop:
                 break
