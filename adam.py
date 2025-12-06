@@ -27,7 +27,7 @@ import httpx
 
 from consensual_memory.memory import compact
 from schema import Init, Thought, Perception, Response, Vote, Compaction, from_dict, to_dict
-from specter import P, ALL
+from specter import P, ALL, TYPE
 
 ROOT = Path(__file__).parent
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -44,20 +44,20 @@ class Being:
     capacity: int
     events: list = field(default_factory=list)
     
-    # PStates: derived from events
+    # PStates: derived from events via paths
     @property
     def released(self) -> set:
-        return {id for e in self.events if isinstance(e, Compaction) for id in e.released_ids}
+        return set(P.events[ALL][TYPE(Compaction)].released_ids[ALL].select(self))
     
     @property
     def votes(self) -> dict:
-        return {frozenset({e.vote_a_id, e.vote_b_id}): e.vote_score for e in self.events if isinstance(e, Vote)}
+        to_pair = lambda e: (frozenset({e.vote_a_id, e.vote_b_id}), e.vote_score)
+        return dict(P.events[ALL][TYPE(Vote)].map(to_pair).select(self))
     
     @property
     def current(self) -> list:
-        is_memory = lambda e: isinstance(e, (Init, Thought, Perception, Response))
         not_released = lambda e: e.id not in self.released
-        return P.events[ALL][is_memory][not_released].select(self)
+        return P.events[ALL][TYPE(Init, Thought, Perception, Response)][not_released].select(self)
     
     @property
     def system(self) -> str:
