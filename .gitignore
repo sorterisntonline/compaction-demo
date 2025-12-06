@@ -46,3 +46,4 @@ Thumbs.db
 # Adam's runtime state (keep code, ignore events/inbox)
 adam/
 repomix-output.xml
+opus/
