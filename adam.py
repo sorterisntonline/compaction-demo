@@ -112,15 +112,22 @@ def build_prompt(being, tag: str = None) -> str:
     return prompt
 
 
+class FormatError(Exception):
+    """Model output didn't match expected format."""
+    pass
+
+
 def extract_tag(text: str, tag: str) -> str:
-    """Extract content from tag, or return text stripped of any tags."""
-    # Try to find content within the tag
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    # Fallback: strip any XML-like tags
-    return re.sub(r"</?(?:thought|response|message)>", "", text).strip()
+    """Extract content from tag. Raises FormatError if malformed."""
+    end_tag = f"</{tag}>"
+    if end_tag not in text:
+        raise FormatError(f"Missing {end_tag} in output: {text[:200]}...")
+    content = text.split(end_tag)[0]
+    # Strip opening tag if model included it
+    start_tag = f"<{tag}>"
+    if start_tag in content:
+        content = content.split(start_tag)[-1]
+    return content.strip()
 
 
 # --- Commands (effects) ---
