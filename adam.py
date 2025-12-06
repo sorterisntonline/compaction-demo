@@ -208,12 +208,12 @@ def main():
     while True:
         try:
             if a.message:
-                print(f"📨 {a.message[:60]}...\n💬 {receive(being, a.message)[:100]}...")
+                print(f"📨 {a.message}\n💬 {receive(being, a.message)}")
                 a.message = None
             elif a.loop and (msg := editor_input()):
-                print(f"📨 {msg[:60]}...\n💬 {receive(being, msg)[:100]}...")
+                print(f"📨 {msg}\n💬 {receive(being, msg)}")
             
-            print(f"💭 {think(being)[:100]}...")
+            print(f"💭 {think(being)}")
             
             if len(current_memories(being)) >= a.capacity:
                 compact(being)
