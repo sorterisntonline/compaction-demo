@@ -162,34 +162,38 @@ def receive(being, message: str) -> str:
 
 
 def compact(being):
-    """Compact memories to half capacity via pairwise voting + rank centrality."""
+    """Compact memories to half capacity via pairwise voting + rank centrality.
+    
+    Idempotent: deterministic spanning tree seeded by memory IDs.
+    If interrupted, restart resumes from cached votes.
+    """
     mems = current_memories(being)
     budget = being.capacity // 2
     if len(mems) <= budget:
         return
     
+    # Deterministic RNG: same memories → same pairs → cached votes hit
+    ids = tuple(sorted(m.id for m in mems))
+    rng = random.Random(hash(ids))
+    
     # Build spanning tree: each new item connects to existing tree
-    shuffled = random.sample(mems, len(mems))
+    shuffled = mems[:]
+    rng.shuffle(shuffled)
     pairs = []
     for k in range(1, len(shuffled)):
-        existing = random.choice(shuffled[:k])
-        new = shuffled[k]
-        pairs.append((existing, new))
+        parent_idx = rng.randrange(k)
+        pairs.append((shuffled[parent_idx], shuffled[k]))
     
-    # Add extra comparisons for robustness
+    # Add extra comparisons for robustness (also deterministic)
     for _ in range(5):
-        pairs.append(tuple(random.sample(mems, 2)))
+        i = rng.randrange(len(mems))
+        j = (i + 1 + rng.randrange(len(mems) - 1)) % len(mems)
+        pairs.append((mems[i], mems[j]))
     
     # Vote on each pair, rank by centrality
     comparisons = []
-    cached = 0
     for a, b in tqdm(pairs, desc="Voting", unit="pair"):
-        key = frozenset({a.id, b.id})
-        if key in being.votes:
-            cached += 1
         comparisons.append((a, b, vote(being, a, b)))
-    if cached:
-        tqdm.write(f"({cached} cached)")
     ranked = rank_from_comparisons(mems, comparisons)
     
     kept, released = ranked[:budget], ranked[budget:]
