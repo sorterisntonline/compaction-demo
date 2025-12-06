@@ -38,7 +38,7 @@ def ts() -> int:
 
 def current_memories(being):
     """Read from PState, sorted by timestamp."""
-    return sorted(being.current.values(), key=lambda e: e.ts)
+    return sorted(being.current.values(), key=lambda e: e.timestamp)
 
 
 def vote_cache(being):
