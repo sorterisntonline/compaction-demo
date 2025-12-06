@@ -54,11 +54,11 @@ def vote_cache(being):
 class Being:
     path: Path
     model: str
+    capacity: int
     events: list = field(default_factory=list)
     # PStates (materialized, incrementally updated)
     votes: dict = field(default_factory=dict)
     current: dict = field(default_factory=dict)  # id -> event
-    capacity: int = 100  # set from Init event
 
 
 # --- ETL (paths only) ---
@@ -73,8 +73,7 @@ def apply_event(being, event):
                 del being.current[rid]
         case Init(capacity=capacity, model=model):
             being.capacity = capacity
-            if model:
-                being.model = model
+            being.model = model
             being.current[event.id] = event
         case Thought() | Perception() | Response():
             being.current[event.id] = event
@@ -264,18 +263,36 @@ def maybe_compact(being) -> bool:
     return False
 
 
-def load(path: Path, model: str) -> Being:
-    being = Being(path, model)
-    if path.exists():
-        # Replay events through ETL to rebuild PStates
-        for i, line in enumerate(path.read_text().splitlines(), 1):
-            if line.strip():
-                try:
-                    event = from_dict(json.loads(line))
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"{path}:{i}: {e}") from e
-                being.events.append(event)
-                apply_event(being, event)
+def load(path: Path) -> Being:
+    """Load existing being. Raises if file doesn't exist or has no Init."""
+    if not path.exists():
+        raise ValueError(f"{path} does not exist. Use 'init' to create.")
+    
+    # First pass: find Init to get model/capacity
+    model, capacity = None, None
+    for line in path.read_text().splitlines():
+        if line.strip():
+            d = json.loads(line)
+            if d.get("type") == "init":
+                model = d.get("model")
+                capacity = d.get("capacity")
+                break
+    
+    if not model:
+        raise ValueError(f"{path}: Init event missing 'model'")
+    if not capacity:
+        raise ValueError(f"{path}: Init event missing 'capacity'")
+    
+    being = Being(path, model, capacity)
+    # Replay all events
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if line.strip():
+            try:
+                event = from_dict(json.loads(line))
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}:{i}: {e}") from e
+            being.events.append(event)
+            apply_event(being, event)
     return being
 
 
@@ -307,42 +324,33 @@ def step(being) -> bool:
             return False
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("events", type=Path, help="Events file (e.g. opus.jsonl)")
-    p.add_argument("-m", "--message", help="Message to send")
-    p.add_argument("--model")
-    p.add_argument("--capacity", type=int, default=100, help="Capacity for new beings")
-    p.add_argument("--compact", action="store_true", help="Run compaction now")
-    p.add_argument("--step", action="store_true", help="Continue from pending state")
-    p.add_argument("--loop", action="store_true", help="Think continuously")
-    a = p.parse_args()
-    
-    if a.message and a.loop:
-        print("❌ --message and --loop are mutually exclusive")
+def cmd_init(args):
+    """Create a new being."""
+    path = args.file
+    if path.exists():
+        print(f"❌ {path} already exists")
         sys.exit(1)
+    being = Being(path, args.model, args.capacity)
+    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model))
+    print(f"🧠 Created {path} | {args.model} | capacity {args.capacity}")
+
+
+def cmd_run(args):
+    """Interact with existing being."""
+    being = load(args.file)
+    print(f"🧠 {being.path} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
     
-    being = load(a.events, a.model)
-    # New being - create Init with capacity and model
-    if not being.events:
-        if not a.model:
-            print(f"❌ New being requires --model")
-            sys.exit(1)
-        append(being, Init(ts(), "", str(uuid.uuid4()), a.capacity, a.model))
-    print(f"🧠 {a.events} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
-    
-    if a.compact:
+    if args.compact:
         compact(being)
         print(f"🗜️ → {len(current_memories(being))} memories")
         return
     
-    if a.step:
+    if args.step:
         step(being)
         maybe_compact(being)
         return
     
-    if a.loop:
-        # Think continuously
+    if args.loop:
         while True:
             try:
                 print(think(being))
@@ -351,18 +359,55 @@ def main():
             except KeyboardInterrupt:
                 print(f"\n💤 {len(current_memories(being))} memories, {len(being.events)} events")
                 break
-    elif a.message:
-        # Respond to message
-        print(receive(being, a.message))
+    elif args.message:
+        print(receive(being, args.message))
         maybe_compact(being)
     else:
-        # Interactive: open editor
         msg = editor_input()
         if msg is None:
             print("(empty, cancelled)")
             sys.exit(1)
         print(receive(being, msg))
         maybe_compact(being)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd")
+    
+    # init subcommand
+    init_p = sub.add_parser("init", help="Create new being")
+    init_p.add_argument("file", type=Path)
+    init_p.add_argument("--model", required=True)
+    init_p.add_argument("--capacity", type=int, required=True)
+    
+    # run subcommand (default)
+    run_p = sub.add_parser("run", help="Interact with being")
+    run_p.add_argument("file", type=Path)
+    run_p.add_argument("-m", "--message")
+    run_p.add_argument("--compact", action="store_true")
+    run_p.add_argument("--step", action="store_true")
+    run_p.add_argument("--loop", action="store_true")
+    
+    args = p.parse_args()
+    
+    # Handle no subcommand - treat first arg as file for 'run'
+    if args.cmd is None:
+        # Re-parse with run as default
+        if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
+            sys.argv.insert(1, "run")
+            args = p.parse_args()
+        else:
+            p.print_help()
+            sys.exit(1)
+    
+    if args.cmd == "init":
+        cmd_init(args)
+    elif args.cmd == "run":
+        if args.message and args.loop:
+            print("❌ --message and --loop are mutually exclusive")
+            sys.exit(1)
+        cmd_run(args)
 
 
 if __name__ == "__main__":
