@@ -325,8 +325,12 @@ def main():
     p.add_argument("--capacity", type=int, default=100, help="Capacity for new beings")
     p.add_argument("--compact", action="store_true", help="Run compaction now")
     p.add_argument("--step", action="store_true", help="Continue from pending state")
-    p.add_argument("--loop", action="store_true", help="Continuous consciousness")
+    p.add_argument("--loop", action="store_true", help="Think continuously")
     a = p.parse_args()
+    
+    if a.message and a.loop:
+        print("❌ --message and --loop are mutually exclusive")
+        sys.exit(1)
     
     being = load(a.events, a.model)
     # New being - create Init with capacity and model
@@ -347,26 +351,28 @@ def main():
         maybe_compact(being)
         return
     
-    while True:
-        try:
-            # Get message: from flag, or open editor
-            msg = a.message
-            a.message = None
-            if msg is None:
-                msg = editor_input()
-                if msg is None:
-                    print("(empty, cancelled)")
-                    sys.exit(1)
-            
-            print(receive(being, msg))
-            maybe_compact(being)
-            
-            if not a.loop:
+    if a.loop:
+        # Think continuously
+        while True:
+            try:
+                print(think(being))
+                maybe_compact(being)
+                time.sleep(3)
+            except KeyboardInterrupt:
+                print(f"\n💤 {len(current_memories(being))} memories, {len(being.events)} events")
                 break
-            time.sleep(3)
-        except KeyboardInterrupt:
-            print(f"\n💤 {len(current_memories(being))} memories, {len(being.events)} events")
-            break
+    elif a.message:
+        # Respond to message
+        print(receive(being, a.message))
+        maybe_compact(being)
+    else:
+        # Interactive: open editor
+        msg = editor_input()
+        if msg is None:
+            print("(empty, cancelled)")
+            sys.exit(1)
+        print(receive(being, msg))
+        maybe_compact(being)
 
 
 if __name__ == "__main__":
