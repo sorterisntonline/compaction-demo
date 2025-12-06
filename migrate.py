@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Migrate event logs to current schema version.
+Migrate event logs to current schema.
 
-Usage: python migrate.py <input> <output>
+Usage: python migrate.py <dir> [output]
 """
 
 import argparse
@@ -12,16 +12,14 @@ from pathlib import Path
 from schema import from_dict, to_dict
 
 
-def migrate(src: Path, dst: Path):
-    """Migrate events from src to dst. Never modifies source."""
-    if src.resolve() == dst.resolve():
-        raise SystemExit("Output must be different from input")
-    
+def migrate(src: Path, dst: Path = None):
+    """Migrate events. In-place if dst is None."""
+    dst = dst or src
     events_file = src / "events.jsonl"
     if not events_file.exists():
         raise SystemExit(f"No events.jsonl in {src}")
     
-    # Parse all events first (validates before writing anything)
+    # Parse all first (validate before writing)
     events = []
     for i, line in enumerate(events_file.read_text().splitlines()):
         if line.strip():
@@ -30,21 +28,18 @@ def migrate(src: Path, dst: Path):
             except Exception as e:
                 raise SystemExit(f"Event {i}: {e}")
     
-    # Write to destination
+    # Write
     dst.mkdir(parents=True, exist_ok=True)
-    (dst / "inbox").mkdir(exist_ok=True)
-    
     with open(dst / "events.jsonl", 'w') as f:
-        for event in events:
-            f.write(json.dumps(to_dict(event)) + '\n')
+        for e in events:
+            f.write(json.dumps(to_dict(e)) + '\n')
     
-    print(f"{len(events)} events: {src} → {dst}")
+    print(f"{len(events)} events migrated" + (f" → {dst}" if dst != src else ""))
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Migrate events to current schema")
-    p.add_argument("input", type=Path, help="Source directory")
-    p.add_argument("output", type=Path, help="Destination directory (must be different)")
+    p = argparse.ArgumentParser()
+    p.add_argument("dir", type=Path)
+    p.add_argument("output", type=Path, nargs="?")
     args = p.parse_args()
-    
-    migrate(args.input, args.output)
+    migrate(args.dir, args.output)
