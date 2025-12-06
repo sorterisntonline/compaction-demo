@@ -321,7 +321,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("events", type=Path, help="Events file (e.g. opus.jsonl)")
     p.add_argument("-m", "--message", help="Message to send")
-    p.add_argument("--model", default="anthropic/claude-sonnet-4")
+    p.add_argument("--model")
     p.add_argument("--capacity", type=int, default=100, help="Capacity for new beings")
     p.add_argument("--compact", action="store_true", help="Run compaction now")
     p.add_argument("--step", action="store_true", help="Continue from pending state")
@@ -331,6 +331,9 @@ def main():
     being = load(a.events, a.model)
     # New being - create Init with capacity and model
     if not being.events:
+        if not a.model:
+            print(f"❌ New being requires --model")
+            sys.exit(1)
         append(being, Init(ts(), "", str(uuid.uuid4()), a.capacity, a.model))
     print(f"🧠 {a.events} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
     
