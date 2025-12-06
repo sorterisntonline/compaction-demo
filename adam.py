@@ -281,9 +281,12 @@ def load(path: Path, model: str) -> Being:
     being = Being(path, model)
     if path.exists():
         # Replay events through ETL to rebuild PStates
-        for line in path.read_text().splitlines():
+        for i, line in enumerate(path.read_text().splitlines(), 1):
             if line.strip():
-                event = from_dict(json.loads(line))
+                try:
+                    event = from_dict(json.loads(line))
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"{path}:{i}: {e}") from e
                 being.events.append(event)
                 apply_event(being, event)
     return being
