@@ -39,14 +39,14 @@ def ts() -> int:
 
 def current_memories(being):
     """Select non-released memory events."""
-    released = set(P[being].events[ALL][TYPE(Compaction)].released_ids[ALL].select())
+    released = P[being].events[ALL][TYPE(Compaction)].released_ids[ALL].select(set)
     return P[being].events[ALL][TYPE(Init, Thought, Perception, Response)][lambda e: e.id not in released].select()
 
 
 def vote_cache(being):
     """Build vote lookup from events."""
     to_pair = lambda e: (frozenset({e.vote_a_id, e.vote_b_id}), e.vote_score)
-    return dict(P[being].events[ALL][TYPE(Vote)].map(to_pair).select())
+    return P[being].events[ALL][TYPE(Vote)].map(to_pair).select(dict)
 
 
 @dataclass

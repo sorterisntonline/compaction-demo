@@ -63,8 +63,8 @@ class Path:
         """Transform each element."""
         return Path(self.steps + (("map", fn),))
     
-    def select(self, data) -> list:
-        """Navigate path and collect all matching values."""
+    def select(self, data, into: Callable = None) -> Any:
+        """Navigate path and collect all matching values. Optionally transform with into(results)."""
         results = [data]
         for step in self.steps:
             new_results = []
@@ -94,7 +94,7 @@ class Path:
                     for r in results:
                         new_results.append(fn(r))
             results = new_results
-        return results
+        return into(results) if into else results
     
     def select_one(self, data) -> Any:
         """Select single value, error if not exactly one."""
@@ -213,8 +213,8 @@ class BoundPath:
     def map(self, fn: Callable) -> "BoundPath":
         return BoundPath(self.data, Path(self.path.steps + (("map", fn),)))
     
-    def select(self) -> list:
-        return self.path.select(self.data)
+    def select(self, into: Callable = None) -> Any:
+        return self.path.select(self.data, into)
     
     def select_one(self) -> Any:
         return self.path.select_one(self.data)
