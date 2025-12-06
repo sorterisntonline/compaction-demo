@@ -20,6 +20,8 @@ import sys
 import tempfile
 import time
 import uuid
+
+from tqdm import tqdm
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -51,11 +53,11 @@ def vote_cache(being):
 class Being:
     path: Path
     model: str
-    capacity: int
     events: list = field(default_factory=list)
     # PStates (materialized, incrementally updated)
     votes: dict = field(default_factory=dict)
     current: dict = field(default_factory=dict)  # id -> event
+    capacity: int = 100  # set from Init event
 
 
 # --- ETL (paths only) ---
@@ -68,7 +70,10 @@ def apply_event(being, event):
         case Compaction(_, _, released_ids):
             for rid in released_ids:
                 del being.current[rid]
-        case Init() | Thought() | Perception() | Response():
+        case Init():
+            being.capacity = event.capacity
+            being.current[event.id] = event
+        case Thought() | Perception() | Response():
             being.current[event.id] = event
 
 
@@ -161,15 +166,23 @@ def compact(being):
         pairs.append(tuple(random.sample(mems, 2)))
     
     # Vote on each pair, rank by centrality
-    comparisons = [(a, b, vote(being, a, b)) for a, b in pairs]
+    comparisons = []
+    cached = 0
+    for a, b in tqdm(pairs, desc="Voting", unit="pair"):
+        key = frozenset({a.id, b.id})
+        if key in being.votes:
+            cached += 1
+        comparisons.append((a, b, vote(being, a, b)))
+    if cached:
+        tqdm.write(f"({cached} cached)")
     ranked = rank_from_comparisons(mems, comparisons)
     
     kept, released = ranked[:budget], ranked[budget:]
     append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
 
-def load(path: Path, model: str, capacity: int) -> Being:
-    being = Being(path, model, capacity)
+def load(path: Path, model: str) -> Being:
+    being = Being(path, model)
     if path.exists():
         # Replay events through ETL to rebuild PStates
         for line in path.read_text().splitlines():
@@ -177,8 +190,6 @@ def load(path: Path, model: str, capacity: int) -> Being:
                 event = from_dict(json.loads(line))
                 being.events.append(event)
                 apply_event(being, event)
-    else:
-        append(being, Init(ts(), "I awaken.", str(uuid.uuid4())))
     return being
 
 
@@ -197,12 +208,21 @@ def main():
     p.add_argument("events", type=Path, help="Events file (e.g. opus.jsonl)")
     p.add_argument("-m", "--message", help="Message to send")
     p.add_argument("--model", default="anthropic/claude-sonnet-4")
-    p.add_argument("--capacity", type=int, default=100)
+    p.add_argument("--capacity", type=int, default=100, help="Capacity for new beings")
+    p.add_argument("--compact", action="store_true", help="Run compaction now")
     p.add_argument("--loop", action="store_true", help="Continuous consciousness")
     a = p.parse_args()
     
-    being = load(a.events, a.model, a.capacity)
-    print(f"🧠 {a.events} | {len(current_memories(being))}/{a.capacity} | {len(vote_cache(being))} votes")
+    being = load(a.events, a.model)
+    # New being - create Init with capacity
+    if not being.events:
+        append(being, Init(ts(), "I awaken.", str(uuid.uuid4()), a.capacity))
+    print(f"🧠 {a.events} | {len(current_memories(being))}/{being.capacity} | {len(vote_cache(being))} votes")
+    
+    if a.compact:
+        compact(being)
+        print(f"🗜️ → {len(current_memories(being))} memories")
+        return
     
     while True:
         try:
@@ -217,7 +237,7 @@ def main():
             
             print(receive(being, msg))
             
-            if len(current_memories(being)) >= a.capacity:
+            if len(current_memories(being)) >= being.capacity:
                 compact(being)
                 print(f"🗜️ → {len(current_memories(being))} memories")
             

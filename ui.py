@@ -4,13 +4,12 @@ Consensual Memory UI: FastAPI server for visualizing beings' event logs and memo
 """
 
 import json
-import time
 from pathlib import Path
 from typing import List
 from dataclasses import dataclass, asdict
 from datetime import datetime
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from python_hiccup.html import render
@@ -261,17 +260,6 @@ def render_being_page(being_dir: str) -> str:
         ]
     ]
 
-    # Message form - raw HTML to avoid hiccup textarea issues
-    message_form_html = f"""
-    <div class="section">
-        <h2>Send Message to {being_dir}</h2>
-        <form method="post" action="/{being_dir}/send">
-            <textarea name="message" placeholder="Type your message to {being_dir}..." rows="4"></textarea>
-            <button type="submit">Send Message</button>
-        </form>
-    </div>
-    """
-
     # Build memory lookup for vote events (id -> content)
     memory_lookup = {}
     for e in events:
@@ -300,11 +288,7 @@ def render_being_page(being_dir: str) -> str:
         ]
     ]
 
-    # Render and inject form HTML after stats
-    html = render(page)
-    html = html.replace('</div></div><div class="section"><h2>Event Log',
-                       '</div></div>' + message_form_html + '<div class="section"><h2>Event Log')
-    return html
+    return render(page)
 
 
 # Routes
@@ -322,22 +306,6 @@ async def view_being(being_dir: str):
     if not data_dir.exists():
         return RedirectResponse(url="/", status_code=303)
     return render_being_page(being_dir)
-
-
-@app.post("/{being_dir}/send")
-async def send_message(being_dir: str, message: str = Form(...)):
-    """Send a message to a being's inbox"""
-    if not message.strip():
-        return RedirectResponse(url=f"/{being_dir}/", status_code=303)
-
-    inbox = ROOT / being_dir / "inbox"
-    inbox.mkdir(exist_ok=True)
-    
-    timestamp = int(time.time() * 1000)
-    filename = inbox / f"message_{timestamp}.txt"
-    filename.write_text(message.strip())
-
-    return RedirectResponse(url=f"/{being_dir}/", status_code=303)
 
 
 @app.get("/{being_dir}/api/events")

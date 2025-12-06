@@ -19,6 +19,7 @@ class Init:
     timestamp: int
     content: str
     id: str
+    capacity: int = 100  # default for backwards compatibility
 
 
 @event
