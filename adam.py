@@ -102,10 +102,25 @@ def format_memory(e) -> str | None:
             return None
 
 
-def build_prompt(being) -> str:
+def build_prompt(being, tag: str = None) -> str:
+    """Build prompt from memories. If tag provided, opens it as invitation."""
     parts = [format_memory(e) for e in current_memories(being)]
     ctx = "\n\n".join(p for p in parts if p)
-    return f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
+    prompt = f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
+    if tag:
+        prompt += f"\n\n<{tag}>"
+    return prompt
+
+
+def extract_tag(text: str, tag: str) -> str:
+    """Extract content from tag, or return text stripped of any tags."""
+    # Try to find content within the tag
+    pattern = rf"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # Fallback: strip any XML-like tags
+    return re.sub(r"</?(?:thought|response|message)>", "", text).strip()
 
 
 # --- Commands (effects) ---
@@ -140,7 +155,8 @@ def vote(being, a, b) -> int:
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
     
-    ctx = "\n".join(e.content for e in current_memories(being))
+    parts = [format_memory(e) for e in current_memories(being)]
+    ctx = "\n\n".join(p for p in parts if p)
     user = f"Your memories:\n{ctx}\n\n---\nWhich memory matters more to you?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
     response = llm(being, user) or ""
     match = re.search(r"-?\d+", response)
@@ -151,14 +167,16 @@ def vote(being, a, b) -> int:
 
 
 def think(being) -> str:
-    thought = llm(being, build_prompt(being), temp=0.9)
+    raw = llm(being, build_prompt(being, tag="thought"), temp=0.9)
+    thought = extract_tag(raw, "thought")
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
 
 
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
-    response = llm(being, build_prompt(being))
+    raw = llm(being, build_prompt(being, tag="response"))
+    response = extract_tag(raw, "response")
     append(being, Response(ts(), response, str(uuid.uuid4())))
     return response
 
@@ -282,7 +300,8 @@ def step(being) -> bool:
     match being.events[-1]:
         case Perception():
             print(f"📨 Pending perception, generating response...")
-            response = llm(being, build_prompt(being))
+            raw = llm(being, build_prompt(being, tag="response"))
+            response = extract_tag(raw, "response")
             append(being, Response(ts(), response, str(uuid.uuid4())))
             print(response)
             return True
