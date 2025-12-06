@@ -207,7 +207,7 @@ def render_index() -> str:
     return render(page)
 
 
-def render_event(event: Event, idx: int) -> list:
+def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
     """Render a single event using hiccup with collapsible details"""
 
     colors = {
@@ -215,7 +215,8 @@ def render_event(event: Event, idx: int) -> list:
         "thought": "#7b68ee",
         "perception": "#50c878",
         "response": "#ff6b6b",
-        "compaction": "#ffa500"
+        "compaction": "#ffa500",
+        "vote": "#e066ff"
     }
     color = colors.get(event.type, "#666")
     
@@ -236,6 +237,28 @@ def render_event(event: Event, idx: int) -> list:
     ]
 
     parts = [content]
+    
+    # Vote events - show the full memories being compared
+    if event.type == "vote" and memory_lookup and event.vote_a_id and event.vote_b_id:
+        score = event.vote_score or 0
+        mem_a_content = memory_lookup.get(event.vote_a_id) or "(memory not found)"
+        mem_b_content = memory_lookup.get(event.vote_b_id) or "(memory not found)"
+        
+        a_label = "Memory A ✓ winner" if score > 0 else "Memory A"
+        b_label = "Memory B ✓ winner" if score < 0 else "Memory B"
+        
+        vote_details = ["div.vote-memories",
+            ["details.memory-detail",
+                ["summary", {"style": f"color: {'#50c878' if score > 0 else '#888'}"}, a_label],
+                ["div.memory-content", str(mem_a_content)]
+            ],
+            ["details.memory-detail",
+                ["summary", {"style": f"color: {'#ff6b6b' if score < 0 else '#888'}"}, b_label],
+                ["div.memory-content", str(mem_b_content)]
+            ]
+        ]
+        parts.append(vote_details)
+    
     if event.type == "compaction":
         kept = len(event.kept_ids) if event.kept_ids else 0
         released = len(event.released_ids) if event.released_ids else 0
@@ -406,6 +429,34 @@ def render_being_page(being_dir: str) -> str:
     .vote-winner {
         color: #888;
     }
+    .vote-memories {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #333;
+    }
+    .memory-detail {
+        margin: 10px 0;
+        background: #1a1a1a;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    .memory-detail summary {
+        padding: 10px 15px;
+        cursor: pointer;
+        font-weight: bold;
+    }
+    .memory-detail summary:hover {
+        background: #252525;
+    }
+    .memory-content {
+        padding: 15px;
+        white-space: pre-wrap;
+        border-top: 1px solid #333;
+        font-size: 0.9em;
+        color: #ccc;
+        max-height: 300px;
+        overflow-y: auto;
+    }
     form {
         display: flex;
         flex-direction: column;
@@ -456,6 +507,8 @@ def render_being_page(being_dir: str) -> str:
     }
     """
 
+    vote_count = sum(1 for e in events if e.type == "vote")
+    
     stats = ["div.stats",
         ["div.stat",
             ["div.stat-label", "Total Events"],
@@ -464,6 +517,10 @@ def render_being_page(being_dir: str) -> str:
         ["div.stat",
             ["div.stat-label", "Current Memories"],
             ["div.stat-value", str(memory_count)]
+        ],
+        ["div.stat",
+            ["div.stat-label", "Cached Votes"],
+            ["div.stat-value", str(vote_count)]
         ],
         ["div.stat",
             ["div.stat-label", "Compactions"],
@@ -482,8 +539,14 @@ def render_being_page(being_dir: str) -> str:
     </div>
     """
 
+    # Build memory lookup for vote events (memory_id -> content)
+    memory_lookup = {}
+    for e in events:
+        if e.type in ["init", "thought", "perception", "response"] and e.memory_id:
+            memory_lookup[e.memory_id] = e.content
+
     # Reverse event list - newest first
-    event_list = [render_event(e, i) for i, e in enumerate(events)]
+    event_list = [render_event(e, i, memory_lookup) for i, e in enumerate(events)]
     event_list.reverse()
 
     events_section = ["div.section",
