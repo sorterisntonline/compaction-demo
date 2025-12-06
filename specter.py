@@ -210,6 +210,33 @@ class BoundPath:
             return BoundPath(self.data, Path(self.path.steps + (("filter", key),)))
         return BoundPath(self.data, Path(self.path.steps + (("key", key),)))
     
+    def _navigate(self):
+        """Navigate through path to get the target object."""
+        target = self.data
+        for step in self.path.steps:
+            match step:
+                case ("attr", name):
+                    target = getattr(target, name)
+                case ("key", k):
+                    target = target[k]
+                case _:
+                    raise ValueError(f"Cannot navigate through {step[0]} for mutation")
+        return target
+    
+    def __setitem__(self, key, value):
+        """Enable P[data].path[key] = value"""
+        self._navigate()[key] = value
+    
+    def __delitem__(self, key):
+        """Enable del P[data].path[key]"""
+        del self._navigate()[key]
+    
+    def __ior__(self, other):
+        """Enable P[data].path |= value (for sets)"""
+        target = self._navigate()
+        target |= other
+        return self
+    
     def map(self, fn: Callable) -> "BoundPath":
         return BoundPath(self.data, Path(self.path.steps + (("map", fn),)))
     
@@ -406,6 +433,35 @@ def test_bound_path():
     print("✓ bound_path")
 
 
+def test_path_mutation():
+    @dataclass
+    class State:
+        counts: dict
+        items: set
+    
+    state = State({"a": 1}, {10, 20})
+    
+    # Set via path
+    P[state].counts["b"] = 2
+    assert state.counts == {"a": 1, "b": 2}
+    
+    # Update existing
+    P[state].counts["a"] = 100
+    assert state.counts["a"] == 100
+    
+    # Delete via path
+    del P[state].counts["b"]
+    assert "b" not in state.counts
+    
+    # |= for sets
+    P[state].items |= {30, 40}
+    assert state.items == {10, 20, 30, 40}
+    
+    print("✓ path_mutation")
+
+
+
+
 if __name__ == "__main__":
     test_select_attr()
     test_select_key()
@@ -421,5 +477,6 @@ if __name__ == "__main__":
     test_filter_transform()
     test_repr()
     test_bound_path()
+    test_path_mutation()
     print("\n✅ All tests passed!")
 

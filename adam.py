@@ -62,18 +62,16 @@ class Being:
 # --- ETL (paths only) ---
 
 def apply_event(being, event):
-    """Transform PStates based on event. Paths only."""
+    """ETL: Update PStates via paths."""
     match event:
         case Vote(_, a_id, b_id, score):
-            key = frozenset({a_id, b_id})
-            being.votes = P[being.votes].transform(lambda d: {**d, key: score})
+            P[being].votes[frozenset({a_id, b_id})] = score
         case Compaction(_, _, released_ids):
-            being.released = P[being.released].transform(lambda s: s | set(released_ids))
-            being.current = P[being.current].transform(
-                lambda d: {k: v for k, v in d.items() if k not in released_ids}
-            )
+            P[being].released |= set(released_ids)
+            for rid in released_ids:
+                del P[being].current[rid]
         case Init() | Thought() | Perception() | Response():
-            being.current = P[being.current].transform(lambda d: {**d, event.id: event})
+            P[being].current[event.id] = event
 
 
 # --- Queries (just read PStates) ---
