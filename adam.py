@@ -123,12 +123,12 @@ def vote(being, a, b) -> int:
         return votes[key] if a.id < b.id else -votes[key]
     
     ctx = "\n".join(e.content for e in current_memories(being))
-    user = f"Your memories:\n{ctx}\n\n---\nCompare:\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
-    response = llm(being, user)
-    match = re.search(r"-?\d+", response or "0")
+    user = f"Your memories:\n{ctx}\n\n---\nWhich memory matters more to you?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
+    response = llm(being, user) or ""
+    match = re.search(r"-?\d+", response)
     score = max(-50, min(50, int(match.group()))) if match else 0
     
-    append(being, Vote(ts(), a.id, b.id, score))
+    append(being, Vote(ts(), a.id, b.id, score, response))
     return score
 
 

@@ -19,7 +19,7 @@ class Init:
     timestamp: int
     content: str
     id: str
-    capacity: int = 100  # default for backwards compatibility
+    capacity: int
 
 
 @event
@@ -49,6 +49,7 @@ class Vote:
     vote_a_id: str
     vote_b_id: str
     vote_score: int
+    reasoning: str = ""
 
 
 @event

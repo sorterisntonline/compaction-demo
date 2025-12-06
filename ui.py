@@ -190,9 +190,10 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
 
     parts = [content_div]
     
-    # Vote events - show the full memories being compared
+    # Vote events - show reasoning and the memories being compared
     if isinstance(event, Vote) and memory_lookup:
         score = event.vote_score or 0
+        reasoning = getattr(event, 'reasoning', '') or ''
         mem_a_content = memory_lookup.get(event.vote_a_id) or "(memory not found)"
         mem_b_content = memory_lookup.get(event.vote_b_id) or "(memory not found)"
         
@@ -200,6 +201,7 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
         b_label = "Memory B ✓ winner" if score < 0 else "Memory B"
         
         vote_details = ["div.vote-memories",
+            ["div.vote-reasoning", reasoning] if reasoning else None,
             ["details.memory-detail",
                 ["summary", {"style": f"color: {'#50c878' if score > 0 else '#888'}"}, a_label],
                 ["div.memory-content", str(mem_a_content)]
@@ -209,6 +211,8 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
                 ["div.memory-content", str(mem_b_content)]
             ]
         ]
+        # Filter out None
+        vote_details = [x for x in vote_details if x is not None]
         parts.append(vote_details)
     
     if isinstance(event, Compaction):
