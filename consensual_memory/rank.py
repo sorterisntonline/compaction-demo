@@ -1,4 +1,3 @@
-tommy@Tommys-Laptop:~/programming/consenusal_memory|main⚡ ⇒  cat ~/Downloads/rank-eric.py
 #!/usr/bin/env python3
 import numpy as np
 import scipy, random, itertools, sys
@@ -60,6 +59,36 @@ def rank_centrality(A, tol=1e-8, max_iters=100000):
     global total_iters
     total_iters += iter + 1
     return scores
+
+def rank_from_comparisons(memories, comparisons):
+    """
+    Builds comparison matrix and computes global ranking.
+    
+    Args:
+        memories: list of items with .id attribute
+        comparisons: list of (mem_a, mem_b, score) where score is -50 to +50
+                     positive means mem_a preferred
+    
+    Returns: memories sorted by score descending
+    """
+    if not memories:
+        return []
+    if len(memories) == 1:
+        return [memories[0]]
+    
+    id_to_idx = {m.id: i for i, m in enumerate(memories)}
+    n = len(memories)
+    A = np.zeros((n, n))
+    
+    for mem_a, mem_b, score in comparisons:
+        p_a = (score + 50) / 100  # Map -50..+50 to 0..1
+        i, j = id_to_idx[mem_a.id], id_to_idx[mem_b.id]
+        A[j, i] += p_a      # i preferred to j
+        A[i, j] += 1 - p_a  # j preferred to i
+    
+    scores = rank_centrality(A)
+    ranked_indices = sorted(range(n), key=lambda k: scores[k], reverse=True)
+    return [memories[i] for i in ranked_indices]
 
 def add_comparison(i, j, A):
     """
