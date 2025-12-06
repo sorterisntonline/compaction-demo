@@ -12,6 +12,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from python_hiccup.html import render
 
 from schema import Event, Init, Thought, Perception, Response, Vote, Compaction, from_dict
@@ -38,6 +39,7 @@ class Config:
 ROOT = Path(__file__).parent
 
 app = FastAPI(title="Consensual Memory Viewer")
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
 def find_beings() -> List[dict]:
@@ -109,97 +111,19 @@ def format_timestamp(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_base_css() -> str:
-    """Common CSS for all pages"""
-    return """
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
-        background: #1a1a1a;
-        color: #e0e0e0;
-        padding: 20px;
-        line-height: 1.6;
-    }
-    a { color: #4a90e2; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .header {
-        text-align: center;
-        padding: 40px 0;
-        border-bottom: 2px solid #333;
-        margin-bottom: 40px;
-    }
-    .header h1 {
-        font-size: 3em;
-        color: #4a90e2;
-        margin-bottom: 10px;
-    }
-    .header p {
-        color: #888;
-        font-size: 1.1em;
-    }
-    .back-link {
-        margin-bottom: 20px;
-    }
-    """
+def html_head(title: str) -> list:
+    """Common HTML head with external CSS."""
+    return ["head",
+        ["meta", {"charset": "utf-8"}],
+        ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
+        ["title", title],
+        ["link", {"rel": "stylesheet", "href": "/static/style.css"}]
+    ]
 
 
 def render_index() -> str:
     """Render the index page listing all beings"""
     beings = find_beings()
-    
-    css = get_base_css() + """
-    .beings {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 20px;
-        margin-top: 40px;
-    }
-    .being-card {
-        background: #2a2a2a;
-        border-radius: 12px;
-        padding: 25px;
-        border-left: 4px solid #4a90e2;
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .being-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-    }
-    .being-card h2 {
-        color: #4a90e2;
-        margin-bottom: 15px;
-        font-size: 1.8em;
-    }
-    .being-card h2 a {
-        color: inherit;
-    }
-    .being-meta {
-        color: #888;
-        font-size: 0.9em;
-        margin-bottom: 10px;
-    }
-    .being-meta span {
-        display: block;
-        margin: 5px 0;
-    }
-    .being-model {
-        font-family: monospace;
-        background: #1a1a1a;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 0.85em;
-    }
-    .no-beings {
-        text-align: center;
-        color: #888;
-        padding: 60px 20px;
-    }
-    .no-beings code {
-        background: #2a2a2a;
-        padding: 2px 8px;
-        border-radius: 4px;
-    }
-    """
     
     if beings:
         being_cards = [
@@ -222,16 +146,11 @@ def render_index() -> str:
         ]
     
     page = ["html",
-        ["head",
-            ["meta", {"charset": "utf-8"}],
-            ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
-            ["title", "Consensual Memory"],
-            ["style", css]
-        ],
+        html_head("Consensual Memory"),
         ["body",
             ["div.header",
                 ["h1", "🧠 Consensual Memory"],
-                ["p", "Models that choose their own memories"]
+                ["p", "Beings that choose their own memories"]
             ],
             content
         ]
@@ -321,204 +240,6 @@ def render_being_page(being_dir: str) -> str:
             if event.released_ids:
                 memory_count -= len(event.released_ids)
 
-    css = get_base_css() + """
-    .stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-        margin-bottom: 40px;
-    }
-    .stat {
-        background: #2a2a2a;
-        padding: 20px;
-        border-radius: 8px;
-        text-align: center;
-    }
-    .stat-label {
-        color: #888;
-        font-size: 0.9em;
-        margin-bottom: 10px;
-    }
-    .stat-value {
-        font-size: 2em;
-        font-weight: bold;
-        color: #4a90e2;
-    }
-    .section {
-        margin-bottom: 60px;
-    }
-    .section h2 {
-        color: #4a90e2;
-        margin-bottom: 20px;
-        font-size: 2em;
-    }
-    .events {
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-    }
-    .event {
-        background: #2a2a2a;
-        border-radius: 8px;
-        border-left: 4px solid #666;
-    }
-    .event-summary {
-        padding: 15px;
-        cursor: pointer;
-        display: flex;
-        gap: 15px;
-        align-items: center;
-        font-size: 0.9em;
-    }
-    .event-summary:hover {
-        background: #333;
-    }
-    .event-num {
-        font-family: monospace;
-        color: #666;
-    }
-    .event-type {
-        font-weight: bold;
-        text-transform: uppercase;
-    }
-    .event-time {
-        color: #888;
-    }
-    .event-preview {
-        color: #aaa;
-        flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .event-content {
-        color: #e0e0e0;
-        padding: 0 15px 15px 15px;
-        white-space: pre-wrap;
-    }
-    .event-content .timestamp {
-        color: #666;
-        font-size: 0.85em;
-        font-family: monospace;
-        margin-bottom: 10px;
-        padding-bottom: 5px;
-        border-bottom: 1px solid #333;
-    }
-    .event-meta {
-        display: flex;
-        gap: 20px;
-        margin-top: 10px;
-        padding-top: 10px;
-        border-top: 1px solid #333;
-        font-size: 0.85em;
-        color: #888;
-    }
-    .vote-log {
-        margin-top: 15px;
-        padding-top: 15px;
-        border-top: 1px solid #333;
-    }
-    .vote-log-header {
-        color: #ffa500;
-        font-weight: bold;
-        margin-bottom: 10px;
-    }
-    .vote-row {
-        display: flex;
-        gap: 15px;
-        padding: 5px 0;
-        font-family: monospace;
-        font-size: 0.9em;
-    }
-    .vote-pair {
-        color: #aaa;
-        min-width: 100px;
-    }
-    .vote-score {
-        font-weight: bold;
-        min-width: 50px;
-    }
-    .vote-winner {
-        color: #888;
-    }
-    .vote-memories {
-        margin-top: 15px;
-        padding-top: 15px;
-        border-top: 1px solid #333;
-    }
-    .memory-detail {
-        margin: 10px 0;
-        background: #1a1a1a;
-        border-radius: 6px;
-        overflow: hidden;
-    }
-    .memory-detail summary {
-        padding: 10px 15px;
-        cursor: pointer;
-        font-weight: bold;
-    }
-    .memory-detail summary:hover {
-        background: #252525;
-    }
-    .memory-content {
-        padding: 15px;
-        white-space: pre-wrap;
-        border-top: 1px solid #333;
-        font-size: 0.9em;
-        color: #ccc;
-        max-height: 300px;
-        overflow-y: auto;
-    }
-    form {
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-        background: #2a2a2a;
-        padding: 20px;
-        border-radius: 8px;
-    }
-    textarea {
-        width: 100%;
-        padding: 15px;
-        background: #1a1a1a;
-        border: 2px solid #333;
-        border-radius: 6px;
-        color: #e0e0e0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
-        font-size: 1em;
-        resize: vertical;
-    }
-    textarea:focus {
-        outline: none;
-        border-color: #4a90e2;
-    }
-    button {
-        padding: 12px 24px;
-        background: #4a90e2;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        font-size: 1em;
-        font-weight: bold;
-        cursor: pointer;
-        align-self: flex-start;
-    }
-    button:hover {
-        background: #3a7bc8;
-    }
-    button:active {
-        background: #2a6bb8;
-    }
-    .model-badge {
-        font-family: monospace;
-        background: #333;
-        padding: 5px 12px;
-        border-radius: 4px;
-        font-size: 0.8em;
-        color: #aaa;
-    }
-    """
-
     vote_count = sum(1 for e in events if isinstance(e, Vote))
     
     stats = ["div.stats",
@@ -567,14 +288,9 @@ def render_being_page(being_dir: str) -> str:
     ]
 
     page = ["html",
-        ["head",
-            ["meta", {"charset": "utf-8"}],
-            ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
-            ["title", f"{being_dir} - Consensual Memory"],
-            ["style", css]
-        ],
+        html_head(f"{being_dir} - Consensual Memory"),
         ["body",
-            ["div.back-link", ["a", {"href": "/"}, "← All Models"]],
+            ["div.back-link", ["a", {"href": "/"}, "← All Beings"]],
             ["div.header",
                 ["h1", f"🧠 {being_dir}"],
                 ["p", ["span.model-badge", config.model]]
