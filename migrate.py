@@ -2,41 +2,49 @@
 """
 Migrate event logs to current schema version.
 
-Usage: python migrate.py <directory>
+Usage: python migrate.py <input> <output>
 """
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 from schema import from_dict, to_dict
 
 
-def migrate(directory: Path):
-    """Migrate events to current schema. Atomic: succeeds fully or not at all."""
-    events_file = directory / "events.jsonl"
-    if not events_file.exists():
-        sys.exit(f"No events.jsonl in {directory}")
+def migrate(src: Path, dst: Path):
+    """Migrate events from src to dst. Never modifies source."""
+    if src.resolve() == dst.resolve():
+        raise SystemExit("Output must be different from input")
     
-    # Parse all events (validates + migrates)
+    events_file = src / "events.jsonl"
+    if not events_file.exists():
+        raise SystemExit(f"No events.jsonl in {src}")
+    
+    # Parse all events first (validates before writing anything)
     events = []
     for i, line in enumerate(events_file.read_text().splitlines()):
-        if not line.strip():
-            continue
-        try:
-            events.append(from_dict(json.loads(line)))
-        except Exception as e:
-            sys.exit(f"Event {i}: {e}")
+        if line.strip():
+            try:
+                events.append(from_dict(json.loads(line)))
+            except Exception as e:
+                raise SystemExit(f"Event {i}: {e}")
     
-    # Write back in current format
-    with open(events_file, 'w') as f:
+    # Write to destination
+    dst.mkdir(parents=True, exist_ok=True)
+    (dst / "inbox").mkdir(exist_ok=True)
+    
+    with open(dst / "events.jsonl", 'w') as f:
         for event in events:
             f.write(json.dumps(to_dict(event)) + '\n')
     
-    print(f"{directory.name}: {len(events)} events migrated")
+    print(f"{len(events)} events: {src} → {dst}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("Usage: python migrate.py <directory>")
-    migrate(Path(sys.argv[1]))
+    p = argparse.ArgumentParser(description="Migrate events to current schema")
+    p.add_argument("input", type=Path, help="Source directory")
+    p.add_argument("output", type=Path, help="Destination directory (must be different)")
+    args = p.parse_args()
+    
+    migrate(args.input, args.output)
