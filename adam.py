@@ -99,11 +99,11 @@ def format_memory(e):
             return None  # Init etc. don't inject
 
 
-def build_prompt(being, suffix: str) -> str:
+def build_prompt(being) -> str:
     current = current_memories(being)
     formatted = [format_memory(e) for e in current]
     ctx = "\n\n".join(f for f in formatted if f)
-    return f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory {len(current)}/{being.capacity}:\n\n{ctx}\n\n{suffix}"
+    return f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
 
 
 # --- Commands (effects) ---
@@ -147,15 +147,14 @@ def vote(being, a, b) -> int:
 
 
 def think(being) -> str:
-    prompt = random.choice(["What emerges?", "What connects?", "What matters?", "Continue.", "What do you notice?"])
-    thought = llm(being, build_prompt(being, prompt), temp=0.9)
+    thought = llm(being, build_prompt(being), temp=0.9)
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
 
 
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
-    response = llm(being, build_prompt(being, f"Message: {message}\n\n[respond]"))
+    response = llm(being, build_prompt(being))
     append(being, Response(ts(), response, str(uuid.uuid4())))
     return response
 
