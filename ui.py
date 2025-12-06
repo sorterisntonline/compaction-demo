@@ -35,7 +35,7 @@ def find_beings() -> List[dict]:
             continue
         # Get model/capacity from Init event
         init = next((e for e in events if isinstance(e, Init)), None)
-        model = getattr(init, 'model', 'unknown') if init else 'unknown'
+        model = (getattr(init, 'model', '') or 'unknown') if init else 'unknown'
         capacity = getattr(init, 'capacity', 100) if init else 100
         beings.append({
             "file": path.stem,
@@ -62,7 +62,7 @@ def load_events_from_path(path: Path) -> List[Event]:
 
 def load_events(being_file: str) -> List[Event]:
     """Load events by filename"""
-    return load_events_from_path(ROOT / being_file)
+    return load_events_from_path(BEINGS_DIR / being_file)
 
 
 def event_type(event: Event) -> str:
@@ -211,7 +211,7 @@ def render_being_page(being_file: str) -> str:
     """Render the page for a specific being"""
     events = load_events(being_file + ".jsonl")
     init = next((e for e in events if isinstance(e, Init)), None)
-    model = getattr(init, 'model', 'unknown') if init else 'unknown'
+    model = (getattr(init, 'model', '') or 'unknown') if init else 'unknown'
 
     # Rebuild current state for stats
     memory_count = 0
@@ -286,7 +286,7 @@ async def index():
 @app.get("/{being_file}", response_class=HTMLResponse)
 async def view_being(being_file: str):
     """View a specific being"""
-    events_path = ROOT / (being_file + ".jsonl")
+    events_path = BEINGS_DIR / (being_file + ".jsonl")
     if not events_path.exists():
         return RedirectResponse(url="/", status_code=303)
     return render_being_page(being_file)
@@ -304,7 +304,7 @@ async def get_stats(being_file: str):
     """Get current stats"""
     events = load_events(being_file + ".jsonl")
     init = next((e for e in events if isinstance(e, Init)), None)
-    model = getattr(init, 'model', 'unknown') if init else 'unknown'
+    model = (getattr(init, 'model', '') or 'unknown') if init else 'unknown'
 
     memories = {}
 
