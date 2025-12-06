@@ -161,39 +161,80 @@ def receive(being, message: str) -> str:
     return response
 
 
+def find_components(nodes, edges):
+    """Find connected components using union-find."""
+    parent = {n: n for n in nodes}
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+    def union(x, y):
+        parent[find(x)] = find(y)
+    for a, b in edges:
+        if a in parent and b in parent:
+            union(a, b)
+    components = {}
+    for n in nodes:
+        root = find(n)
+        components.setdefault(root, []).append(n)
+    return list(components.values())
+
+
 def compact(being):
     """Compact memories to half capacity via pairwise voting + rank centrality.
     
-    Idempotent: deterministic spanning tree seeded by memory IDs.
-    If interrupted, restart resumes from cached votes.
+    Recoverable: uses existing votes first, only adds edges to connect graph.
     """
     mems = current_memories(being)
     budget = being.capacity // 2
     if len(mems) <= budget:
         return
     
-    # Deterministic RNG: same memories → same pairs → cached votes hit
-    ids = tuple(sorted(m.id for m in mems))
-    rng = random.Random(hash(ids))
+    id_to_mem = {m.id: m for m in mems}
+    mem_ids = set(id_to_mem.keys())
     
-    # Build spanning tree: each new item connects to existing tree
-    shuffled = mems[:]
-    rng.shuffle(shuffled)
-    pairs = []
-    for k in range(1, len(shuffled)):
-        parent_idx = rng.randrange(k)
-        pairs.append((shuffled[parent_idx], shuffled[k]))
-    
-    # Add extra comparisons for robustness (also deterministic)
-    for _ in range(5):
-        i = rng.randrange(len(mems))
-        j = (i + 1 + rng.randrange(len(mems) - 1)) % len(mems)
-        pairs.append((mems[i], mems[j]))
-    
-    # Vote on each pair, rank by centrality
+    # Gather existing votes on current memories
+    existing_pairs = []
     comparisons = []
-    for a, b in tqdm(pairs, desc="Voting", unit="pair"):
-        comparisons.append((a, b, vote(being, a, b)))
+    for key, score in being.votes.items():
+        ids_in_key = set(key)
+        if ids_in_key <= mem_ids:  # both memories still current
+            a_id, b_id = sorted(key)
+            existing_pairs.append((a_id, b_id))
+            comparisons.append((id_to_mem[a_id], id_to_mem[b_id], score))
+    
+    print(f"📊 {len(existing_pairs)} existing votes on current memories")
+    
+    # Find connected components
+    components = find_components(mem_ids, existing_pairs)
+    print(f"🔗 {len(components)} connected components")
+    
+    # Connect components with minimal new edges
+    new_pairs = []
+    if len(components) > 1:
+        # Deterministic RNG for reproducibility
+        rng = random.Random(hash(tuple(sorted(mem_ids))))
+        # Connect each component to the first
+        main = components[0]
+        for comp in components[1:]:
+            a_id = rng.choice(main)
+            b_id = rng.choice(comp)
+            new_pairs.append((a_id, b_id))
+            main = main + comp  # merge for next iteration
+    
+    # Add a few extra for robustness
+    rng = random.Random(hash(tuple(sorted(mem_ids))) + 1)
+    for _ in range(5):
+        a, b = rng.sample(list(mem_ids), 2)
+        if frozenset({a, b}) not in being.votes:
+            new_pairs.append((a, b))
+    
+    # Vote on new pairs only
+    if new_pairs:
+        for a_id, b_id in tqdm(new_pairs, desc="Voting", unit="pair"):
+            a, b = id_to_mem[a_id], id_to_mem[b_id]
+            comparisons.append((a, b, vote(being, a, b)))
+    
     ranked = rank_from_comparisons(mems, comparisons)
     
     kept, released = ranked[:budget], ranked[budget:]
