@@ -16,6 +16,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -184,13 +185,11 @@ def load(path: Path, model: str, capacity: int) -> Being:
 def editor_input() -> str | None:
     editor = os.environ.get("EDITOR", "vim")
     with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
-        f.write(b"\n# Enter message above. Lines starting with # are ignored.\n")
         tmp = f.name
     subprocess.run([editor, tmp])
-    content = Path(tmp).read_text()
+    content = Path(tmp).read_text().strip()
     Path(tmp).unlink()
-    lines = [l for l in content.splitlines() if not l.startswith("#")]
-    return "\n".join(lines).strip() or None
+    return content or None
 
 
 def main():
@@ -212,11 +211,11 @@ def main():
             a.message = None
             if msg is None:
                 msg = editor_input()
+                if msg is None:
+                    print("(empty, cancelled)")
+                    sys.exit(1)
             
-            if msg:
-                print(f"📨 {msg}\n💬 {receive(being, msg)}")
-            
-            print(f"💭 {think(being)}")
+            print(receive(being, msg))
             
             if len(current_memories(being)) >= a.capacity:
                 compact(being)
