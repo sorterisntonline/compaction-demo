@@ -38,15 +38,13 @@ def ts() -> int:
 
 
 def current_memories(being):
-    """Select non-released memory events."""
-    released = P[being].events[ALL][TYPE(Compaction)].released_ids[ALL].select(set)
-    return P[being].events[ALL][TYPE(Init, Thought, Perception, Response)][lambda e: e.id not in released].select()
+    """Read from PState."""
+    return list(being.current.values())
 
 
 def vote_cache(being):
-    """Build vote lookup from events."""
-    to_pair = lambda e: (frozenset({e.vote_a_id, e.vote_b_id}), e.vote_score)
-    return P[being].events[ALL][TYPE(Vote)].map(to_pair).select(dict)
+    """Read from PState."""
+    return being.votes
 
 
 @dataclass
@@ -55,9 +53,30 @@ class Being:
     model: str
     capacity: int
     events: list = field(default_factory=list)
+    # PStates (materialized, incrementally updated)
+    votes: dict = field(default_factory=dict)
+    released: set = field(default_factory=set)
+    current: dict = field(default_factory=dict)  # id -> event
 
 
-# --- Queries (pure) ---
+# --- ETL (paths only) ---
+
+def apply_event(being, event):
+    """Transform PStates based on event. Paths only."""
+    match event:
+        case Vote(_, a_id, b_id, score):
+            key = frozenset({a_id, b_id})
+            being.votes = P[being.votes].transform(lambda d: {**d, key: score})
+        case Compaction(_, _, released_ids):
+            being.released = P[being.released].transform(lambda s: s | set(released_ids))
+            being.current = P[being.current].transform(
+                lambda d: {k: v for k, v in d.items() if k not in released_ids}
+            )
+        case Init() | Thought() | Perception() | Response():
+            being.current = P[being.current].transform(lambda d: {**d, event.id: event})
+
+
+# --- Queries (just read PStates) ---
 
 def system_prompt(being):
     codebase = ROOT / "repomix-output.xml"
@@ -75,9 +94,11 @@ def build_prompt(being, suffix: str) -> str:
 # --- Commands (effects) ---
 
 def append(being, event):
+    """Depot append + ETL."""
     with open(being.path, "a") as f:
         f.write(json.dumps(to_dict(event)) + "\n")
     being.events.append(event)
+    apply_event(being, event)
 
 
 def llm(being, user: str, temp: float = 0.7) -> str:
@@ -154,7 +175,12 @@ def compact(being):
 def load(path: Path, model: str, capacity: int) -> Being:
     being = Being(path, model, capacity)
     if path.exists():
-        being.events = [from_dict(json.loads(line)) for line in path.read_text().splitlines() if line.strip()]
+        # Replay events through ETL to rebuild PStates
+        for line in path.read_text().splitlines():
+            if line.strip():
+                event = from_dict(json.loads(line))
+                being.events.append(event)
+                apply_event(being, event)
     else:
         append(being, Init(ts(), "I awaken.", str(uuid.uuid4())))
     return being
