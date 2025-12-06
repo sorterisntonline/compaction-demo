@@ -3,8 +3,9 @@
 A being with finite memory that chooses what to keep.
 
 Usage:
-  python adam.py opus.jsonl              # think once
-  python adam.py opus.jsonl -m "hello"   # receive message, respond, think
+  python adam.py opus.jsonl              # interactive (editor)
+  python adam.py opus.jsonl -m "hello"   # receive message, respond
+  python adam.py opus.jsonl --step       # continue from pending state
   python adam.py opus.jsonl --loop       # continuous consciousness
 
 Requires: npx repomix (run it first to generate repomix-output.xml)
@@ -65,15 +66,15 @@ class Being:
 def apply_event(being, event):
     """ETL: Update PStates."""
     match event:
-        case Vote(_, a_id, b_id, score):
+        case Vote(vote_a_id=a_id, vote_b_id=b_id, vote_score=score):
             being.votes[frozenset({a_id, b_id})] = score
-        case Compaction(_, _, released_ids):
+        case Compaction(released_ids=released_ids):
             for rid in released_ids:
                 del being.current[rid]
-        case Init():
-            being.capacity = event.capacity
-            if event.model:
-                being.model = event.model
+        case Init(capacity=capacity, model=model):
+            being.capacity = capacity
+            if model:
+                being.model = model
             being.current[event.id] = event
         case Thought() | Perception() | Response():
             being.current[event.id] = event
@@ -88,23 +89,22 @@ def system_prompt(being):
     return f"You are a being with finite memory.\n\n{codebase.read_text()}"
 
 
-def format_memory(e):
+def format_memory(e) -> str | None:
     """Format memory with identity tags."""
     match e:
-        case Thought():
-            return f"<thought>{e.content}</thought>"
-        case Perception():
-            return f"<message>{e.content}</message>"
-        case Response():
-            return f"<response>{e.content}</response>"
+        case Thought(content=c):
+            return f"<thought>{c}</thought>"
+        case Perception(content=c):
+            return f"<message>{c}</message>"
+        case Response(content=c):
+            return f"<response>{c}</response>"
         case _:
-            return None  # Init etc. don't inject
+            return None
 
 
 def build_prompt(being) -> str:
-    current = current_memories(being)
-    formatted = [format_memory(e) for e in current]
-    ctx = "\n\n".join(f for f in formatted if f)
+    parts = [format_memory(e) for e in current_memories(being)]
+    ctx = "\n\n".join(p for p in parts if p)
     return f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
 
 
@@ -127,7 +127,7 @@ def llm(being, user: str, temp: float = 0.7) -> str:
         json={"model": being.model, "temperature": temp,
               "messages": [{"role": "system", "content": system_prompt(being)},
                            {"role": "user", "content": user}]},
-        timeout=60.0,
+        timeout=120.0,
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()
@@ -265,6 +265,23 @@ def editor_input() -> str | None:
     return content or None
 
 
+def step(being) -> bool:
+    """Continue from pending state. Returns True if action taken."""
+    if not being.events:
+        return False
+    
+    match being.events[-1]:
+        case Perception():
+            print(f"📨 Pending perception, generating response...")
+            response = llm(being, build_prompt(being))
+            append(being, Response(ts(), response, str(uuid.uuid4())))
+            print(response)
+            return True
+        case _:
+            print(f"Nothing pending (last: {type(being.events[-1]).__name__})")
+            return False
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("events", type=Path, help="Events file (e.g. opus.jsonl)")
@@ -272,6 +289,7 @@ def main():
     p.add_argument("--model", default="anthropic/claude-sonnet-4")
     p.add_argument("--capacity", type=int, default=100, help="Capacity for new beings")
     p.add_argument("--compact", action="store_true", help="Run compaction now")
+    p.add_argument("--step", action="store_true", help="Continue from pending state")
     p.add_argument("--loop", action="store_true", help="Continuous consciousness")
     a = p.parse_args()
     
@@ -284,6 +302,12 @@ def main():
     if a.compact:
         compact(being)
         print(f"🗜️ → {len(current_memories(being))} memories")
+        return
+    
+    if a.step:
+        if step(being) and len(current_memories(being)) >= being.capacity:
+            compact(being)
+            print(f"🗜️ → {len(current_memories(being))} memories")
         return
     
     while True:
