@@ -129,7 +129,6 @@ def append(being, event):
 def llm(being, user: str, temp: float = 0.7) -> str:
     if not being.model:
         raise ValueError(f"No model specified for {being.path}. Set 'model' field in Init event.")
-    print(f"⏳ {being.model}...", end="", flush=True)
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
@@ -139,7 +138,6 @@ def llm(being, user: str, temp: float = 0.7) -> str:
         timeout=120.0,
     )
     r.raise_for_status()
-    print("\r", end="")  # clear the waiting indicator
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
