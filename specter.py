@@ -8,6 +8,13 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 
+class _NONE:
+    """Sentinel for filtered-out values."""
+    pass
+
+NONE = _NONE()
+
+
 class ALL:
     """Navigate into all elements of a sequence."""
     pass
@@ -126,28 +133,37 @@ class Path:
                     return data[:k] + (new_val,) + data[k+1:]
             
             case ("all",):
-                return [self._transform(item, step_idx + 1, fn) for item in data]
+                results = []
+                for item in data:
+                    new_item = self._transform(item, step_idx + 1, fn)
+                    if new_item is not NONE:
+                        results.append(new_item)
+                return tuple(results) if isinstance(data, tuple) else results
             
             case ("first",):
                 if not data:
                     return data
                 new_first = self._transform(data[0], step_idx + 1, fn)
+                if new_first is NONE:
+                    return data[1:] if isinstance(data, list) else data[1:]
                 if isinstance(data, list):
-                    return [new_first] + data[1:]
+                    return [new_first] + list(data[1:])
                 return (new_first,) + data[1:]
             
             case ("last",):
                 if not data:
                     return data
                 new_last = self._transform(data[-1], step_idx + 1, fn)
+                if new_last is NONE:
+                    return data[:-1] if isinstance(data, list) else data[:-1]
                 if isinstance(data, list):
-                    return data[:-1] + [new_last]
+                    return list(data[:-1]) + [new_last]
                 return data[:-1] + (new_last,)
             
             case ("filter", pred):
-                if pred(data):
-                    return self._transform(data, step_idx + 1, fn)
-                return data
+                if not pred(data):
+                    return NONE  # Signal removal
+                return self._transform(data, step_idx + 1, fn)
         
         return data
     
@@ -155,11 +171,18 @@ class Path:
         """Set all matches to val."""
         return self.transform(data, lambda _: val)
     
-    def filterer(self, data) -> Any:
-        """Remove elements that don't match the path's filters."""
-        # Collect indices/keys that match
-        # This is trickier - for now just use transform with identity
-        pass
+    def __repr__(self):
+        parts = []
+        for step in self.steps:
+            match step:
+                case ("attr", name): parts.append(f".{name}")
+                case ("key", k): parts.append(f"[{k!r}]")
+                case ("all",): parts.append("[ALL]")
+                case ("first",): parts.append("[FIRST]")
+                case ("last",): parts.append("[LAST]")
+                case ("filter", _): parts.append("[<filter>]")
+                case ("map", _): parts.append(".map(<fn>)")
+        return "P" + "".join(parts) if parts else "P"
 
 
 # Convenient entry point
@@ -297,6 +320,21 @@ def test_first_last():
     print("✓ first_last")
 
 
+def test_filter_transform():
+    # Filter should remove non-matching items during transform
+    lst = [1, 2, 3, 4, 5]
+    result = P[ALL][lambda x: x > 2].transform(lst, lambda x: x * 10)
+    assert result == [30, 40, 50], f"Got {result}"
+    print("✓ filter_transform")
+
+
+def test_repr():
+    assert repr(P.members[ALL].age) == "P.members[ALL].age"
+    assert repr(P[FIRST]) == "P[FIRST]"
+    assert repr(P) == "P"
+    print("✓ repr")
+
+
 if __name__ == "__main__":
     test_select_attr()
     test_select_key()
@@ -309,5 +347,7 @@ if __name__ == "__main__":
     test_transform_nested()
     test_setval()
     test_first_last()
+    test_filter_transform()
+    test_repr()
     print("\n✅ All tests passed!")
 

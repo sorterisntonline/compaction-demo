@@ -124,4 +124,3 @@ if __name__ == '__main__':
     for _ in range(iters):
         run_test(n, extra_comparisons)
     print(f'Total iterations: {total_iters}')
-tommy@Tommys-Laptop:~/programming/consenusal_memory|main⚡ ⇒
