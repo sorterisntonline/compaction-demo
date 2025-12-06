@@ -5,7 +5,6 @@ Rank centrality extracts global ordering from sparse pairwise comparisons.
 The budget cuts. What remains is chosen.
 """
 
-from .memory import Memory, compact
-from .rank import rank_centrality
+from .rank import rank_centrality, rank_from_comparisons
 
-__all__ = ["Memory", "compact", "rank_centrality"]
+__all__ = ["rank_centrality", "rank_from_comparisons"]

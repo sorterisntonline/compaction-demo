@@ -25,7 +25,7 @@ from pathlib import Path
 
 import httpx
 
-from consensual_memory.memory import compact
+from consensual_memory.rank import rank_from_comparisons
 from schema import Init, Thought, Perception, Response, Vote, Compaction, from_dict, to_dict
 from specter import P, ALL, TYPE
 
@@ -91,6 +91,7 @@ class Being:
         return r.json()["choices"][0]["message"]["content"].strip()
     
     def vote(self, a, b) -> int:
+        """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a)."""
         key = frozenset({a.id, b.id})
         if key in self.votes:
             return self.votes[key] if a.id < b.id else -self.votes[key]
@@ -116,9 +117,30 @@ class Being:
         self.append(Response(ts(), response, str(uuid.uuid4())))
         return response
     
-    def do_compact(self):
+    def compact(self):
+        """Compact memories to half capacity via pairwise voting + rank centrality."""
         mems = self.current
-        kept, released = compact(mems, self.capacity // 2, self.vote, extra=5)
+        budget = self.capacity // 2
+        if len(mems) <= budget:
+            return
+        
+        # Build spanning tree: each new item connects to existing tree
+        shuffled = random.sample(mems, len(mems))
+        pairs = []
+        for k in range(1, len(shuffled)):
+            existing = random.choice(shuffled[:k])
+            new = shuffled[k]
+            pairs.append((existing, new))
+        
+        # Add extra comparisons for robustness
+        for _ in range(5):
+            pairs.append(tuple(random.sample(mems, 2)))
+        
+        # Vote on each pair, rank by centrality
+        comparisons = [(a, b, self.vote(a, b)) for a, b in pairs]
+        ranked = rank_from_comparisons(mems, comparisons)
+        
+        kept, released = ranked[:budget], ranked[budget:]
         self.append(Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
 
@@ -166,7 +188,7 @@ def main():
             print(f"💭 {being.think()[:100]}...")
             
             if len(being.current) >= a.capacity:
-                being.do_compact()
+                being.compact()
                 print(f"🗜️ → {len(being.current)} memories")
             
             if not a.loop:
