@@ -54,7 +54,10 @@ class Path:
             return Path(self.steps + (("last",),))
         if callable(key):
             return Path(self.steps + (("filter", key),))
-        return Path(self.steps + (("key", key),))
+        if isinstance(key, (int, str)):
+            return Path(self.steps + (("key", key),))
+        # Otherwise, bind data and return BoundPath
+        return BoundPath(key, self)
     
     def map(self, fn: Callable) -> "Path":
         """Transform each element."""
@@ -183,6 +186,47 @@ class Path:
                 case ("filter", _): parts.append("[<filter>]")
                 case ("map", _): parts.append(".map(<fn>)")
         return "P" + "".join(parts) if parts else "P"
+
+
+@dataclass
+class BoundPath:
+    """A path bound to specific data. Reads left-to-right: P[data].attr[ALL].select()"""
+    data: Any
+    path: Path
+    
+    def __getattr__(self, name: str) -> "BoundPath":
+        if name.startswith("_") or name in ("data", "path"):
+            raise AttributeError(name)
+        return BoundPath(self.data, Path(self.path.steps + (("attr", name),)))
+    
+    def __getitem__(self, key) -> "BoundPath":
+        if key is ALL:
+            return BoundPath(self.data, Path(self.path.steps + (("all",),)))
+        if key is FIRST:
+            return BoundPath(self.data, Path(self.path.steps + (("first",),)))
+        if key is LAST:
+            return BoundPath(self.data, Path(self.path.steps + (("last",),)))
+        if callable(key):
+            return BoundPath(self.data, Path(self.path.steps + (("filter", key),)))
+        return BoundPath(self.data, Path(self.path.steps + (("key", key),)))
+    
+    def map(self, fn: Callable) -> "BoundPath":
+        return BoundPath(self.data, Path(self.path.steps + (("map", fn),)))
+    
+    def select(self) -> list:
+        return self.path.select(self.data)
+    
+    def select_one(self) -> Any:
+        return self.path.select_one(self.data)
+    
+    def transform(self, fn: Callable) -> Any:
+        return self.path.transform(self.data, fn)
+    
+    def setval(self, val) -> Any:
+        return self.path.setval(self.data, val)
+    
+    def __repr__(self):
+        return f"BoundPath({self.data!r}, {self.path!r})"
 
 
 # Convenient entry point
@@ -335,6 +379,33 @@ def test_repr():
     print("✓ repr")
 
 
+def test_bound_path():
+    @dataclass
+    class Team:
+        members: list
+    
+    @dataclass
+    class Person:
+        name: str
+        age: int
+    
+    team = Team([Person("alice", 30), Person("bob", 25)])
+    
+    # Left-to-right: P[data].path.select()
+    names = P[team].members[ALL].name.select()
+    assert names == ["alice", "bob"]
+    
+    ages = P[team].members[ALL].age.select()
+    assert ages == [30, 25]
+    
+    # Transform works too
+    team2 = P[team].members[ALL].age.transform(lambda a: a + 1)
+    assert team2.members[0].age == 31
+    assert team.members[0].age == 30  # original unchanged
+    
+    print("✓ bound_path")
+
+
 if __name__ == "__main__":
     test_select_attr()
     test_select_key()
@@ -349,5 +420,6 @@ if __name__ == "__main__":
     test_first_last()
     test_filter_transform()
     test_repr()
+    test_bound_path()
     print("\n✅ All tests passed!")
 
