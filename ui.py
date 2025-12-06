@@ -24,6 +24,16 @@ app = FastAPI(title="Consensual Memory Viewer")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
+def get_model(init: Init) -> str:
+    """Get model from Init event, error if missing."""
+    if init is None:
+        raise ValueError("No Init event found")
+    model = getattr(init, 'model', '')
+    if not model:
+        raise ValueError(f"Init event missing 'model' field")
+    return model
+
+
 def find_beings() -> List[dict]:
     """Find all .jsonl files in beings directory"""
     beings = []
@@ -35,12 +45,12 @@ def find_beings() -> List[dict]:
             continue
         # Get model/capacity from Init event
         init = next((e for e in events if isinstance(e, Init)), None)
-        model = (getattr(init, 'model', '') or 'unknown') if init else 'unknown'
+        model = get_model(init)
         capacity = getattr(init, 'capacity', 100) if init else 100
         beings.append({
             "file": path.stem,
             "path": path.name,
-            "model": model or 'unknown',
+            "model": model,
             "capacity": capacity,
             "events": len(events)
         })
@@ -211,7 +221,7 @@ def render_being_page(being_file: str) -> str:
     """Render the page for a specific being"""
     events = load_events(being_file + ".jsonl")
     init = next((e for e in events if isinstance(e, Init)), None)
-    model = (getattr(init, 'model', '') or 'unknown') if init else 'unknown'
+    model = get_model(init)
 
     # Rebuild current state for stats
     memory_count = 0
@@ -304,7 +314,7 @@ async def get_stats(being_file: str):
     """Get current stats"""
     events = load_events(being_file + ".jsonl")
     init = next((e for e in events if isinstance(e, Init)), None)
-    model = (getattr(init, 'model', '') or 'unknown') if init else 'unknown'
+    model = get_model(init)
 
     memories = {}
 
@@ -327,6 +337,7 @@ async def get_stats(being_file: str):
 
 if __name__ == "__main__":
     import argparse
+    import sys
     import uvicorn
     
     parser = argparse.ArgumentParser()
@@ -335,7 +346,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Update module-level variable in this module's namespace
-    import sys
     sys.modules[__name__].BEINGS_DIR = args.dir.resolve()
     
     print(f"🌐 Starting Consensual Memory UI on http://localhost:{args.port}")

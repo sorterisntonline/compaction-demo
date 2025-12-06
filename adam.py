@@ -119,6 +119,8 @@ def append(being, event):
 
 
 def llm(being, user: str, temp: float = 0.7) -> str:
+    if not being.model:
+        raise ValueError(f"No model specified for {being.path}. Set 'model' field in Init event.")
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
