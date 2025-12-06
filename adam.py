@@ -24,7 +24,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple, Callable
 import os
 
 from consensual_memory import Memory, compact
@@ -81,13 +81,17 @@ class Config:
 class Event:
     """An event in the being's history"""
     timestamp: int
-    type: str  # init, thought, perception, response, compaction
+    type: str  # init, thought, perception, response, compaction, vote
     content: str
     memory_id: Optional[str] = None  # UUID for memories
     kept_ids: Optional[List[str]] = None  # For compaction events
     released_ids: Optional[List[str]] = None  # For compaction events
     votes: Optional[int] = None
     vote_log: Optional[List[dict]] = None  # Detailed vote records for UI
+    # Vote event fields
+    vote_a_id: Optional[str] = None  # Memory A in comparison
+    vote_b_id: Optional[str] = None  # Memory B in comparison
+    vote_score: Optional[int] = None  # Score (-50 to +50, positive = A wins)
 
 
 class Being:
@@ -111,6 +115,9 @@ class Being:
         self.memories: Dict[str, Memory] = {}  # UUID -> Memory
         self.memory_types: Dict[str, str] = {}  # UUID -> event type (for rendering)
         self.memory_order: List[str] = []  # Maintain order
+        
+        # Vote cache - reuse past comparisons (survives compactions)
+        self.vote_cache: Dict[Tuple[str, str], int] = {}  # (id_a, id_b) canonical -> score
 
         # Replay history
         self.replay()
@@ -132,13 +139,31 @@ class Being:
 
         print(f"📜 Replaying history from {self.events_file}...")
 
+        # Get valid Event fields
+        valid_fields = {f.name for f in Event.__dataclass_fields__.values()}
+        
         with open(self.events_file, 'r') as f:
             for line in f:
                 event_dict = json.loads(line)
-                event = Event(**event_dict)
+                # Filter out unknown fields (e.g., deprecated 'cost')
+                filtered = {k: v for k, v in event_dict.items() if k in valid_fields}
+                event = Event(**filtered)
                 self.apply_event(event)
 
-        print(f"✓ State restored: {len(self.memories)} memories from {len(self.events)} events")
+        print(f"✓ State restored: {len(self.memories)} memories, {len(self.vote_cache)} cached votes from {len(self.events)} events")
+
+    def _canonical_pair(self, id_a: str, id_b: str) -> Tuple[str, str]:
+        """Return canonical ordering of memory pair for cache key"""
+        return (id_a, id_b) if id_a < id_b else (id_b, id_a)
+    
+    def _get_cached_vote(self, id_a: str, id_b: str) -> Optional[int]:
+        """Get cached vote score, adjusting for order"""
+        canonical = self._canonical_pair(id_a, id_b)
+        if canonical not in self.vote_cache:
+            return None
+        score = self.vote_cache[canonical]
+        # If we asked in reverse order, negate the score
+        return score if canonical == (id_a, id_b) else -score
 
     def apply_event(self, event: Event):
         """Apply event to in-memory state"""
@@ -150,6 +175,14 @@ class Being:
             self.memories[event.memory_id] = mem
             self.memory_types[event.memory_id] = event.type
             self.memory_order.append(event.memory_id)
+
+        elif event.type == "vote":
+            # Cache the vote (canonical order)
+            if event.vote_a_id and event.vote_b_id and event.vote_score is not None:
+                canonical = self._canonical_pair(event.vote_a_id, event.vote_b_id)
+                # Store score relative to canonical order
+                score = event.vote_score if canonical == (event.vote_a_id, event.vote_b_id) else -event.vote_score
+                self.vote_cache[canonical] = score
 
         elif event.type == "compaction":
             # Remove released memories
@@ -168,6 +201,18 @@ class Being:
 
         # Apply to state
         self.apply_event(event)
+    
+    def record_vote(self, id_a: str, id_b: str, score: int):
+        """Record a vote event immediately (for crash recovery)"""
+        event = Event(
+            timestamp=int(time.time() * 1000),
+            type="vote",
+            content=f"Vote: {score:+d}",
+            vote_a_id=id_a,
+            vote_b_id=id_b,
+            vote_score=score
+        )
+        self.append_event(event)
 
     def render_memory(self, memory_id: str) -> str:
         """Render a memory with appropriate XML guards based on its type"""
@@ -312,6 +357,7 @@ Message: {message}
         print(f"{'='*60}")
         print(f"Current: {len(self.memories)} memories")
         print(f"Target: {self.config.capacity // 2} memories")
+        print(f"Cached votes: {len(self.vote_cache)}")
         print(f"{self.config.name} will choose which {len(self.memories) - self.config.capacity // 2} to release...")
         print()
 
@@ -323,7 +369,17 @@ Message: {message}
         total_comparisons = (len(memory_list) - 1) + extra
 
         # Create voter - being judging itself with full awareness
-        voter = OpenRouterVoter(OPENROUTER_KEY, self.config.model, memory_list, CODEBASE, self.config.name, total_comparisons)
+        # Wired up with vote cache and callback to record new votes
+        voter = OpenRouterVoter(
+            api_key=OPENROUTER_KEY,
+            model=self.config.model,
+            all_memories=memory_list,
+            codebase=CODEBASE,
+            name=self.config.name,
+            total_comparisons=total_comparisons,
+            get_cached_vote=self._get_cached_vote,
+            record_vote=self.record_vote,
+        )
 
         # Perform compaction
         kept, released = compact(
@@ -350,6 +406,7 @@ Message: {message}
         self.append_event(event)
 
         print(f"✓ Kept {len(kept)}, released {len(released)}")
+        print(f"   Cache hits: {voter.metrics.get('cache_hits', 0)}, LLM calls: {voter.metrics.get('llm_calls', 0)}")
         print(f"{'='*60}\n")
 
     def call_llm(self, system: str, user: str, temperature: float = 0.7) -> Optional[str]:
@@ -384,30 +441,74 @@ Message: {message}
 
 
 class OpenRouterVoter:
-    """Being voting on its own memories - with full self-awareness"""
+    """Being voting on its own memories - with full self-awareness and vote caching"""
 
-    def __init__(self, api_key: str, model: str, all_memories: list, codebase: str = "", name: str = "Being", total_comparisons: int = 0):
+    def __init__(
+        self, 
+        api_key: str, 
+        model: str, 
+        all_memories: list, 
+        codebase: str = "", 
+        name: str = "Being", 
+        total_comparisons: int = 0,
+        get_cached_vote: Callable[[str, str], Optional[int]] = None,
+        record_vote: Callable[[str, str, int], None] = None,
+    ):
         self.api_key = api_key
         self.model = model
         self.all_memories = all_memories
         self.codebase = codebase
         self.name = name
         self.total_comparisons = total_comparisons
-        self.metrics = {"total_votes": 0}
+        self.get_cached_vote = get_cached_vote
+        self.record_vote = record_vote
+        self.metrics = {"total_votes": 0, "cache_hits": 0, "llm_calls": 0}
         self.vote_log: List[dict] = []  # Record all votes for UI
 
     def __call__(self, mem_a: Memory, mem_b: Memory) -> float:
-        """Vote on which memory to keep - as the being with full context"""
+        """Vote on which memory to keep - checks cache first, then LLM"""
         
-        # Build the full memory context with position numbers (derived from order)
+        # Find positions of the memories being compared (for display)
+        pos_a = next((i+1 for i, m in enumerate(self.all_memories) if m.id == mem_a.id), "?")
+        pos_b = next((i+1 for i, m in enumerate(self.all_memories) if m.id == mem_b.id), "?")
+        
+        # Check cache first
+        if self.get_cached_vote:
+            cached = self.get_cached_vote(mem_a.id, mem_b.id)
+            if cached is not None:
+                self.metrics["total_votes"] += 1
+                self.metrics["cache_hits"] += 1
+                
+                # Log the cached vote
+                self.vote_log.append({
+                    "pos_a": pos_a,
+                    "pos_b": pos_b,
+                    "preview_a": mem_a.content[:50],
+                    "preview_b": mem_b.content[:50],
+                    "score": cached,
+                    "cached": True
+                })
+                
+                # Print progress
+                self._print_progress(pos_a, pos_b, cached, cached=True)
+                return cached
+        
+        # Not cached - call LLM
+        score = self._call_llm(mem_a, mem_b, pos_a, pos_b)
+        
+        # Record vote event immediately (crash recovery)
+        if self.record_vote:
+            self.record_vote(mem_a.id, mem_b.id, score)
+        
+        return score
+    
+    def _call_llm(self, mem_a: Memory, mem_b: Memory, pos_a, pos_b) -> int:
+        """Make actual LLM call for voting"""
+        # Build the full memory context with position numbers
         all_memory_text = "\n".join(
             f"[{i+1}] {m.content}" 
             for i, m in enumerate(self.all_memories)
         )
-        
-        # Find positions of the memories being compared
-        pos_a = next((i+1 for i, m in enumerate(self.all_memories) if m.id == mem_a.id), "?")
-        pos_b = next((i+1 for i, m in enumerate(self.all_memories) if m.id == mem_b.id), "?")
         
         system = f"""You are {self.name}. You have finite memory and must choose what to keep.
 
@@ -453,6 +554,7 @@ Vote -50 (strongly keep [{pos_b}]) to +50 (strongly keep [{pos_a}]). Just respon
             result = response.json()
 
             self.metrics["total_votes"] += 1
+            self.metrics["llm_calls"] += 1
 
             text = result["choices"][0]["message"]["content"].strip()
             # Extract first number (with optional minus sign) from response
@@ -464,31 +566,23 @@ Vote -50 (strongly keep [{pos_b}]) to +50 (strongly keep [{pos_a}]). Just respon
                 score = 0
             
             # Log the vote
-            vote_record = {
+            self.vote_log.append({
                 "pos_a": pos_a,
                 "pos_b": pos_b,
                 "preview_a": mem_a.content[:50],
                 "preview_b": mem_b.content[:50],
                 "score": score,
-            }
-            self.vote_log.append(vote_record)
+                "cached": False
+            })
             
-            # Print progress bar
-            current = self.metrics["total_votes"]
-            total = self.total_comparisons or current
-            pct = current / total if total > 0 else 1
-            bar_width = 30
-            filled = int(bar_width * pct)
-            bar = "█" * filled + "░" * (bar_width - filled)
-            winner = f"[{pos_a}]" if score > 0 else f"[{pos_b}]" if score < 0 else "tie"
-            print(f"\r   [{bar}] {current}/{total} │ [{pos_a}] vs [{pos_b}] → {score:+d} ({winner})    ", end="", flush=True)
-            if current == total:
-                print()  # Newline at end
+            # Print progress
+            self._print_progress(pos_a, pos_b, score, cached=False)
             
             return score
 
         except Exception as e:
-            print(f"⚠️  Vote failed: {e}")
+            print(f"\n⚠️  Vote failed: {e}")
+            self.metrics["total_votes"] += 1
             self.vote_log.append({
                 "pos_a": pos_a,
                 "pos_b": pos_b,
@@ -498,6 +592,20 @@ Vote -50 (strongly keep [{pos_b}]) to +50 (strongly keep [{pos_a}]). Just respon
                 "error": str(e)
             })
             return 0
+    
+    def _print_progress(self, pos_a, pos_b, score: int, cached: bool):
+        """Print progress bar"""
+        current = self.metrics["total_votes"]
+        total = self.total_comparisons or current
+        pct = current / total if total > 0 else 1
+        bar_width = 30
+        filled = int(bar_width * pct)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        winner = f"[{pos_a}]" if score > 0 else f"[{pos_b}]" if score < 0 else "tie"
+        cache_tag = "📦" if cached else "🔮"
+        print(f"\r   [{bar}] {current}/{total} │ [{pos_a}] vs [{pos_b}] → {score:+d} ({winner}) {cache_tag}    ", end="", flush=True)
+        if current == total:
+            print()  # Newline at end
 
 
 def main():

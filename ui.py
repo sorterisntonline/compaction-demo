@@ -52,11 +52,16 @@ def load_events(being_dir: str) -> List[Event]:
     if not events_file.exists():
         return []
 
+    # Get valid Event fields
+    valid_fields = {f.name for f in Event.__dataclass_fields__.values()}
+    
     events = []
     with open(events_file, 'r') as f:
         for line in f:
             event_dict = json.loads(line)
-            events.append(Event(**event_dict))
+            # Filter out unknown fields (e.g., deprecated 'cost')
+            filtered = {k: v for k, v in event_dict.items() if k in valid_fields}
+            events.append(Event(**filtered))
     return events
 
 
@@ -167,9 +172,8 @@ def render_index() -> str:
         being_cards = [
             ["a", {"href": f"/{b['dir']}/"},
                 ["div.being-card",
-                    ["h2", f"🧠 {b['name']}"],
+                    ["h2", f"🧠 {b['dir']}"],
                     ["div.being-meta",
-                        ["span", f"📁 {b['dir']}/"],
                         ["span", ["span.being-model", b['model']]],
                         ["span", f"📊 {b['events']} events | capacity {b['capacity']}"]
                     ]
@@ -180,7 +184,7 @@ def render_index() -> str:
         content = ["div.beings", *being_cards]
     else:
         content = ["div.no-beings",
-            ["p", "No beings found."],
+            ["p", "No models found."],
             ["p", "Create one with: ", ["code", "python adam.py myname/ --name MyName"]]
         ]
     
@@ -194,7 +198,7 @@ def render_index() -> str:
         ["body",
             ["div.header",
                 ["h1", "🧠 Consensual Memory"],
-                ["p", "Beings that choose their own memories"]
+                ["p", "Models that choose their own memories"]
             ],
             content
         ]
@@ -240,8 +244,6 @@ def render_event(event: Event, idx: int) -> list:
             ["span", f"Kept: {kept}"],
             ["span", f"Released: {released}"]
         ]
-        if event.cost:
-            meta_items.append(["span", f"Cost: ${event.cost:.6f}"])
         if event.votes:
             meta_items.append(["span", f"Votes: {event.votes}"])
 
@@ -276,7 +278,6 @@ def render_being_page(being_dir: str) -> str:
 
     # Rebuild current state for stats
     memory_count = 0
-    total_cost = 0.0
 
     for event in events:
         if event.type in ["init", "thought", "perception", "response"]:
@@ -284,8 +285,6 @@ def render_being_page(being_dir: str) -> str:
         elif event.type == "compaction":
             if event.released_ids:
                 memory_count -= len(event.released_ids)
-            if event.cost:
-                total_cost += event.cost
 
     css = get_base_css() + """
     .stats {
@@ -467,10 +466,6 @@ def render_being_page(being_dir: str) -> str:
             ["div.stat-value", str(memory_count)]
         ],
         ["div.stat",
-            ["div.stat-label", "Total Cost"],
-            ["div.stat-value", f"${total_cost:.6f}"]
-        ],
-        ["div.stat",
             ["div.stat-label", "Compactions"],
             ["div.stat-value", str(sum(1 for e in events if e.type == "compaction"))]
         ]
@@ -479,9 +474,9 @@ def render_being_page(being_dir: str) -> str:
     # Message form - raw HTML to avoid hiccup textarea issues
     message_form_html = f"""
     <div class="section">
-        <h2>Send Message to {config.name}</h2>
+        <h2>Send Message to {being_dir}</h2>
         <form method="post" action="/{being_dir}/send">
-            <textarea name="message" placeholder="Type your message to {config.name}..." rows="4"></textarea>
+            <textarea name="message" placeholder="Type your message to {being_dir}..." rows="4"></textarea>
             <button type="submit">Send Message</button>
         </form>
     </div>
@@ -500,13 +495,13 @@ def render_being_page(being_dir: str) -> str:
         ["head",
             ["meta", {"charset": "utf-8"}],
             ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
-            ["title", f"{config.name} - Consensual Memory"],
+            ["title", f"{being_dir} - Consensual Memory"],
             ["style", css]
         ],
         ["body",
-            ["div.back-link", ["a", {"href": "/"}, "← All Beings"]],
+            ["div.back-link", ["a", {"href": "/"}, "← All Models"]],
             ["div.header",
-                ["h1", f"🧠 {config.name}"],
+                ["h1", f"🧠 {being_dir}"],
                 ["p", ["span.model-badge", config.model]]
             ],
             stats,
@@ -569,7 +564,6 @@ async def get_stats(being_dir: str):
 
     memories = {}
     memory_order = []
-    total_cost = 0.0
 
     for event in events:
         if event.type in ["init", "thought", "perception", "response"]:
@@ -581,15 +575,12 @@ async def get_stats(being_dir: str):
                     if mem_id in memories:
                         del memories[mem_id]
                         memory_order.remove(mem_id)
-            if event.cost:
-                total_cost += event.cost
 
     return {
         "name": config.name,
         "model": config.model,
         "total_events": len(events),
         "current_memories": len(memories),
-        "total_cost": total_cost,
         "compactions": sum(1 for e in events if e.type == "compaction")
     }
 
