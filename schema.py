@@ -18,28 +18,28 @@ def event(cls):
 class Init:
     timestamp: int
     content: str
-    memory_id: str
+    id: str
 
 
 @event
 class Thought:
     timestamp: int
     content: str
-    memory_id: str
+    id: str
 
 
 @event
 class Perception:
     timestamp: int
     content: str
-    memory_id: str
+    id: str
 
 
 @event
 class Response:
     timestamp: int
     content: str
-    memory_id: str
+    id: str
 
 
 @event
@@ -65,6 +65,9 @@ def to_dict(e: Event) -> dict:
 
 
 def from_dict(d: dict) -> Event:
+    # Migration: memory_id -> id
+    if "memory_id" in d:
+        d["id"] = d.pop("memory_id")
     cls = _registry[d["type"]]
     valid = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in valid})

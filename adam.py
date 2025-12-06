@@ -25,11 +25,19 @@ from pathlib import Path
 
 import httpx
 
-from consensual_memory import Memory, compact
+from consensual_memory.memory import compact
 from schema import Init, Thought, Perception, Response, Vote, Compaction, from_dict, to_dict
 
 ROOT = Path(__file__).parent
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+
+
+def ts() -> int:
+    return int(time.time() * 1000)
+
+
+def has_content(e) -> bool:
+    return isinstance(e, (Init, Thought, Perception, Response))
 
 
 @dataclass
@@ -37,43 +45,35 @@ class Being:
     path: Path
     model: str
     capacity: int
-    memories: list[Memory] = field(default_factory=list)
-    votes: dict[frozenset, int] = field(default_factory=dict)
     events: list = field(default_factory=list)
+    released: set = field(default_factory=set)
+    votes: dict = field(default_factory=dict)
     
     @property
     def system(self) -> str:
-        codebase = (ROOT / "repomix-output.xml")
+        codebase = ROOT / "repomix-output.xml"
         if not codebase.exists():
             raise FileNotFoundError("Run 'npx repomix' first")
         return f"You are a being with finite memory.\n\n{codebase.read_text()}"
     
-    @property
-    def context(self) -> str:
-        return "\n".join(m.content for m in self.memories)
+    def current(self):
+        return [e for e in self.events if has_content(e) and e.id not in self.released]
     
-    def _ts(self) -> int:
-        return int(time.time() * 1000)
+    def prompt(self, suffix: str) -> str:
+        ctx = "\n".join(e.content for e in self.current())
+        return f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory {len(self.current())}/{self.capacity}:\n\n{ctx}\n\n{suffix}"
     
-    def _apply(self, event):
-        """Apply event to state."""
-        self.events.append(event)
-        match event:
-            case Init(_, content, mid) | Thought(_, content, mid) | \
-                 Perception(_, content, mid) | Response(_, content, mid):
-                self.memories.append(Memory(content, mid))
-            case Vote(_, a, b, score):
-                self.votes[frozenset({a, b})] = score
-            case Compaction(_, kept, _):
-                self.memories = [m for m in self.memories if m.id in kept]
-    
-    def _append(self, event):
-        """Write event and apply."""
+    def append(self, event):
+        """Write event, update state."""
         with open(self.path, "a") as f:
             f.write(json.dumps(to_dict(event)) + "\n")
-        self._apply(event)
+        self.events.append(event)
+        if isinstance(event, Vote):
+            self.votes[frozenset({event.vote_a_id, event.vote_b_id})] = event.vote_score
+        elif isinstance(event, Compaction):
+            self.released.update(event.released_ids)
     
-    def _llm(self, user: str, temp: float = 0.7) -> str:
+    def llm(self, user: str, temp: float = 0.7) -> str:
         r = httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}"},
@@ -85,36 +85,36 @@ class Being:
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
     
-    def _vote(self, a: Memory, b: Memory) -> int:
+    def vote(self, a, b) -> int:
         key = frozenset({a.id, b.id})
         if key in self.votes:
             return self.votes[key] if a.id < b.id else -self.votes[key]
         
-        user = f"Your memories:\n{self.context}\n\n---\nCompare:\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
-        response = self._llm(user)
+        ctx = "\n".join(e.content for e in self.current())
+        user = f"Your memories:\n{ctx}\n\n---\nCompare:\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
+        response = self.llm(user)
         match = re.search(r"-?\d+", response or "0")
         score = max(-50, min(50, int(match.group()))) if match else 0
         
-        self._append(Vote(self._ts(), a.id, b.id, score))
+        self.append(Vote(ts(), a.id, b.id, score))
         return score
     
     def think(self) -> str:
         prompt = random.choice(["What emerges?", "What connects?", "What matters?", "Continue.", "What do you notice?"])
-        user = f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory {len(self.memories)}/{self.capacity}:\n\n{self.context}\n\n{prompt}"
-        thought = self._llm(user, temp=0.9)
-        self._append(Thought(self._ts(), thought, str(uuid.uuid4())))
+        thought = self.llm(self.prompt(prompt), temp=0.9)
+        self.append(Thought(ts(), thought, str(uuid.uuid4())))
         return thought
     
     def receive(self, message: str) -> str:
-        self._append(Perception(self._ts(), message, str(uuid.uuid4())))
-        user = f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory:\n{self.context}\n\nMessage: {message}\n\n[respond]"
-        response = self._llm(user)
-        self._append(Response(self._ts(), response, str(uuid.uuid4())))
+        self.append(Perception(ts(), message, str(uuid.uuid4())))
+        response = self.llm(self.prompt(f"Message: {message}\n\n[respond]"))
+        self.append(Response(ts(), response, str(uuid.uuid4())))
         return response
     
     def compact(self):
-        kept, released = compact(self.memories, self.capacity // 2, self._vote, extra=5)
-        self._append(Compaction(self._ts(), [m.id for m in kept], [m.id for m in released]))
+        mems = self.current()
+        kept, released = compact(mems, self.capacity // 2, self.vote, extra=5)
+        self.append(Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
 
 def load(path: Path, model: str, capacity: int) -> Being:
@@ -122,9 +122,14 @@ def load(path: Path, model: str, capacity: int) -> Being:
     if path.exists():
         for line in path.read_text().splitlines():
             if line.strip():
-                being._apply(from_dict(json.loads(line)))
+                event = from_dict(json.loads(line))
+                being.events.append(event)
+                if isinstance(event, Vote):
+                    being.votes[frozenset({event.vote_a_id, event.vote_b_id})] = event.vote_score
+                elif isinstance(event, Compaction):
+                    being.released.update(event.released_ids)
     else:
-        being._append(Init(being._ts(), "I awaken.", str(uuid.uuid4())))
+        being.append(Init(ts(), "I awaken.", str(uuid.uuid4())))
     return being
 
 
@@ -150,7 +155,7 @@ def main():
     a = p.parse_args()
     
     being = load(a.events, a.model, a.capacity)
-    print(f"🧠 {a.events} | {len(being.memories)}/{a.capacity} | {len(being.votes)} votes cached")
+    print(f"🧠 {a.events} | {len(being.current())}/{a.capacity} | {len(being.votes)} votes")
     
     while True:
         try:
@@ -162,15 +167,15 @@ def main():
             
             print(f"💭 {being.think()[:100]}...")
             
-            if len(being.memories) >= a.capacity:
+            if len(being.current()) >= a.capacity:
                 being.compact()
-                print(f"🗜️ → {len(being.memories)} memories")
+                print(f"🗜️ → {len(being.current())} memories")
             
             if not a.loop:
                 break
             time.sleep(3)
         except KeyboardInterrupt:
-            print(f"\n💤 {len(being.memories)} memories, {len(being.events)} events")
+            print(f"\n💤 {len(being.current())} memories, {len(being.events)} events")
             break
 
 
