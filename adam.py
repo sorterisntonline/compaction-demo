@@ -207,10 +207,13 @@ def main():
     
     while True:
         try:
-            if a.message:
-                print(f"📨 {a.message}\n💬 {receive(being, a.message)}")
-                a.message = None
-            elif a.loop and (msg := editor_input()):
+            # Get message: from flag, or open editor
+            msg = a.message
+            a.message = None
+            if msg is None:
+                msg = editor_input()
+            
+            if msg:
                 print(f"📨 {msg}\n💬 {receive(being, msg)}")
             
             print(f"💭 {think(being)}")

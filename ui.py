@@ -6,15 +6,33 @@ Consensual Memory UI: FastAPI server for visualizing beings' event logs and memo
 import json
 import time
 from pathlib import Path
-from typing import List, Optional
-from dataclasses import asdict
+from typing import List
+from dataclasses import dataclass, asdict
 from datetime import datetime
 
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from python_hiccup.html import render
 
-from adam import Event, Config
+from schema import Event, Init, Thought, Perception, Response, Vote, Compaction, from_dict
+
+
+@dataclass
+class Config:
+    name: str = "unknown"
+    model: str = "unknown"
+    capacity: int = 100
+    
+    @classmethod
+    def load(cls, path: Path) -> "Config":
+        if path.exists():
+            data = json.loads(path.read_text())
+            return cls(
+                name=data.get("name", path.parent.name),
+                model=data.get("model", "unknown"),
+                capacity=data.get("capacity", 100)
+            )
+        return cls(name=path.parent.name)
 
 # Root of the project
 ROOT = Path(__file__).parent
@@ -52,17 +70,32 @@ def load_events(being_dir: str) -> List[Event]:
     if not events_file.exists():
         return []
 
-    # Get valid Event fields
-    valid_fields = {f.name for f in Event.__dataclass_fields__.values()}
-    
     events = []
     with open(events_file, 'r') as f:
         for line in f:
-            event_dict = json.loads(line)
-            # Filter out unknown fields (e.g., deprecated 'cost')
-            filtered = {k: v for k, v in event_dict.items() if k in valid_fields}
-            events.append(Event(**filtered))
+            if line.strip():
+                event_dict = json.loads(line)
+                events.append(from_dict(event_dict))
     return events
+
+
+def event_type(event: Event) -> str:
+    """Get event type as string."""
+    return type(event).__name__.lower()
+
+
+def event_content(event: Event) -> str:
+    """Get event content if it has one."""
+    if hasattr(event, 'content'):
+        return event.content
+    return ""
+
+
+def event_id(event: Event) -> str:
+    """Get event id if it has one."""
+    if hasattr(event, 'id'):
+        return event.id
+    return ""
 
 
 def load_config(being_dir: str) -> Config:
@@ -218,28 +251,29 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
         "compaction": "#ffa500",
         "vote": "#e066ff"
     }
-    color = colors.get(event.type, "#666")
+    etype = event_type(event)
+    color = colors.get(etype, "#666")
     
-    event_content = event.content if event.content else "(empty)"
-    preview = event_content[:60] + "..." if len(event_content) > 60 else event_content
+    content_text = event_content(event) or "(empty)"
+    preview = content_text[:60] + "..." if len(content_text) > 60 else content_text
 
     summary = ["summary.event-summary",
         ["span.event-num", f"#{idx}"],
-        ["span.event-type", {"style": f"color: {color}"}, event.type.upper()],
+        ["span.event-type", {"style": f"color: {color}"}, etype.upper()],
         ["span.event-time", format_timestamp(event.timestamp)],
         ["span.event-preview", preview]
     ]
 
     # Add timestamp to the content as well
-    content = ["div.event-content",
+    content_div = ["div.event-content",
         ["div.timestamp", format_timestamp(event.timestamp)],
-        ["div", event_content]
+        ["div", content_text]
     ]
 
-    parts = [content]
+    parts = [content_div]
     
     # Vote events - show the full memories being compared
-    if event.type == "vote" and memory_lookup and event.vote_a_id and event.vote_b_id:
+    if isinstance(event, Vote) and memory_lookup:
         score = event.vote_score or 0
         mem_a_content = memory_lookup.get(event.vote_a_id) or "(memory not found)"
         mem_b_content = memory_lookup.get(event.vote_b_id) or "(memory not found)"
@@ -259,37 +293,15 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
         ]
         parts.append(vote_details)
     
-    if event.type == "compaction":
+    if isinstance(event, Compaction):
         kept = len(event.kept_ids) if event.kept_ids else 0
         released = len(event.released_ids) if event.released_ids else 0
 
-        meta_items = [
+        meta = ["div.event-meta",
             ["span", f"Kept: {kept}"],
             ["span", f"Released: {released}"]
         ]
-        if event.votes:
-            meta_items.append(["span", f"Votes: {event.votes}"])
-
-        meta = ["div.event-meta"] + meta_items
         parts.append(meta)
-        
-        if hasattr(event, 'vote_log') and event.vote_log:
-            vote_rows = []
-            for v in event.vote_log:
-                score = v.get('score', 0)
-                winner = f"[{v['pos_a']}]" if score > 0 else f"[{v['pos_b']}]" if score < 0 else "tie"
-                vote_rows.append(
-                    ["div.vote-row",
-                        ["span.vote-pair", f"[{v['pos_a']}] vs [{v['pos_b']}]"],
-                        ["span.vote-score", {"style": f"color: {'#50c878' if score > 0 else '#ff6b6b' if score < 0 else '#888'}"}, f"{score:+d}"],
-                        ["span.vote-winner", f"→ {winner}"],
-                    ]
-                )
-            vote_section = ["div.vote-log",
-                ["div.vote-log-header", "Vote Log:"],
-                *vote_rows
-            ]
-            parts.append(vote_section)
 
     return ["details.event", {"id": f"event-{idx}"}, summary, *parts]
 
@@ -303,9 +315,9 @@ def render_being_page(being_dir: str) -> str:
     memory_count = 0
 
     for event in events:
-        if event.type in ["init", "thought", "perception", "response"]:
+        if isinstance(event, (Init, Thought, Perception, Response)):
             memory_count += 1
-        elif event.type == "compaction":
+        elif isinstance(event, Compaction):
             if event.released_ids:
                 memory_count -= len(event.released_ids)
 
@@ -507,7 +519,7 @@ def render_being_page(being_dir: str) -> str:
     }
     """
 
-    vote_count = sum(1 for e in events if e.type == "vote")
+    vote_count = sum(1 for e in events if isinstance(e, Vote))
     
     stats = ["div.stats",
         ["div.stat",
@@ -524,7 +536,7 @@ def render_being_page(being_dir: str) -> str:
         ],
         ["div.stat",
             ["div.stat-label", "Compactions"],
-            ["div.stat-value", str(sum(1 for e in events if e.type == "compaction"))]
+            ["div.stat-value", str(sum(1 for e in events if isinstance(e, Compaction)))]
         ]
     ]
 
@@ -539,11 +551,11 @@ def render_being_page(being_dir: str) -> str:
     </div>
     """
 
-    # Build memory lookup for vote events (memory_id -> content)
+    # Build memory lookup for vote events (id -> content)
     memory_lookup = {}
     for e in events:
-        if e.type in ["init", "thought", "perception", "response"] and e.memory_id:
-            memory_lookup[e.memory_id] = e.content
+        if isinstance(e, (Init, Thought, Perception, Response)):
+            memory_lookup[e.id] = e.content
 
     # Reverse event list - newest first
     event_list = [render_event(e, i, memory_lookup) for i, e in enumerate(events)]
@@ -626,25 +638,21 @@ async def get_stats(being_dir: str):
     config = load_config(being_dir)
 
     memories = {}
-    memory_order = []
 
     for event in events:
-        if event.type in ["init", "thought", "perception", "response"]:
-            memories[event.memory_id] = event.content
-            memory_order.append(event.memory_id)
-        elif event.type == "compaction":
+        if isinstance(event, (Init, Thought, Perception, Response)):
+            memories[event.id] = event.content
+        elif isinstance(event, Compaction):
             if event.released_ids:
                 for mem_id in event.released_ids:
-                    if mem_id in memories:
-                        del memories[mem_id]
-                        memory_order.remove(mem_id)
+                    memories.pop(mem_id, None)
 
     return {
         "name": config.name,
         "model": config.model,
         "total_events": len(events),
         "current_memories": len(memories),
-        "compactions": sum(1 for e in events if e.type == "compaction")
+        "compactions": sum(1 for e in events if isinstance(e, Compaction))
     }
 
 
