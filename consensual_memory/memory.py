@@ -94,19 +94,10 @@ def collect_votes(
     return votes
 
 
-def rank_memories(
-    memories: List[Memory], 
-    votes: List[Vote],
-    prior_scores: dict = None
-) -> List[Tuple[Memory, float]]:
+def rank_memories(memories: List[Memory], votes: List[Vote]) -> List[Tuple[Memory, float]]:
     """
     Compute global ranking from pairwise votes.
     Returns (memory, score) pairs sorted by score descending.
-    
-    Args:
-        memories: List of memories to rank
-        votes: List of pairwise votes
-        prior_scores: Optional dict of memory_id -> prior strength (from past compactions)
     """
     if not memories:
         return []
@@ -129,17 +120,6 @@ def rank_memories(
 
     # Compute rankings
     scores = rank_centrality(A)
-
-    # Add prior strengths (normalized to same scale as rank centrality)
-    if prior_scores:
-        # Normalize prior scores to [0, 1] range similar to rank centrality output
-        prior_values = [prior_scores.get(m.id, 0) for m in memories]
-        if prior_values:
-            max_abs = max(abs(v) for v in prior_values) or 1
-            # Add normalized prior as a boost (0.1 weight to not overwhelm current votes)
-            for i, m in enumerate(memories):
-                prior = prior_scores.get(m.id, 0)
-                scores[i] += 0.1 * (prior / max_abs)
 
     # Sort by score
     ranked = [(memories[i], scores[i]) for i in range(n)]
