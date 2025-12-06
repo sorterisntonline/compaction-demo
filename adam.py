@@ -27,6 +27,7 @@ import httpx
 
 from consensual_memory.memory import compact
 from schema import Init, Thought, Perception, Response, Vote, Compaction, from_dict, to_dict
+from specter import P, ALL
 
 ROOT = Path(__file__).parent
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -36,18 +37,27 @@ def ts() -> int:
     return int(time.time() * 1000)
 
 
-def has_content(e) -> bool:
-    return isinstance(e, (Init, Thought, Perception, Response))
-
-
 @dataclass
 class Being:
     path: Path
     model: str
     capacity: int
     events: list = field(default_factory=list)
-    released: set = field(default_factory=set)
-    votes: dict = field(default_factory=dict)
+    
+    # PStates: derived from events
+    @property
+    def released(self) -> set:
+        return {id for e in self.events if isinstance(e, Compaction) for id in e.released_ids}
+    
+    @property
+    def votes(self) -> dict:
+        return {frozenset({e.vote_a_id, e.vote_b_id}): e.vote_score for e in self.events if isinstance(e, Vote)}
+    
+    @property
+    def current(self) -> list:
+        is_memory = lambda e: isinstance(e, (Init, Thought, Perception, Response))
+        not_released = lambda e: e.id not in self.released
+        return P.events[ALL][is_memory][not_released].select(self)
     
     @property
     def system(self) -> str:
@@ -56,23 +66,18 @@ class Being:
             raise FileNotFoundError("Run 'npx repomix' first")
         return f"You are a being with finite memory.\n\n{codebase.read_text()}"
     
-    def current(self):
-        return [e for e in self.events if has_content(e) and e.id not in self.released]
-    
+    # Views
     def prompt(self, suffix: str) -> str:
-        ctx = "\n".join(e.content for e in self.current())
-        return f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory {len(self.current())}/{self.capacity}:\n\n{ctx}\n\n{suffix}"
+        ctx = "\n".join(e.content for e in self.current)
+        return f"[{datetime.now():%Y-%m-%d %H:%M}]\n\nMemory {len(self.current)}/{self.capacity}:\n\n{ctx}\n\n{suffix}"
     
+    # Depot: just append
     def append(self, event):
-        """Write event, update state."""
         with open(self.path, "a") as f:
             f.write(json.dumps(to_dict(event)) + "\n")
         self.events.append(event)
-        if isinstance(event, Vote):
-            self.votes[frozenset({event.vote_a_id, event.vote_b_id})] = event.vote_score
-        elif isinstance(event, Compaction):
-            self.released.update(event.released_ids)
     
+    # Actions
     def llm(self, user: str, temp: float = 0.7) -> str:
         r = httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -90,7 +95,7 @@ class Being:
         if key in self.votes:
             return self.votes[key] if a.id < b.id else -self.votes[key]
         
-        ctx = "\n".join(e.content for e in self.current())
+        ctx = "\n".join(e.content for e in self.current)
         user = f"Your memories:\n{ctx}\n\n---\nCompare:\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
         response = self.llm(user)
         match = re.search(r"-?\d+", response or "0")
@@ -111,8 +116,8 @@ class Being:
         self.append(Response(ts(), response, str(uuid.uuid4())))
         return response
     
-    def compact(self):
-        mems = self.current()
+    def do_compact(self):
+        mems = self.current
         kept, released = compact(mems, self.capacity // 2, self.vote, extra=5)
         self.append(Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
@@ -120,14 +125,7 @@ class Being:
 def load(path: Path, model: str, capacity: int) -> Being:
     being = Being(path, model, capacity)
     if path.exists():
-        for line in path.read_text().splitlines():
-            if line.strip():
-                event = from_dict(json.loads(line))
-                being.events.append(event)
-                if isinstance(event, Vote):
-                    being.votes[frozenset({event.vote_a_id, event.vote_b_id})] = event.vote_score
-                elif isinstance(event, Compaction):
-                    being.released.update(event.released_ids)
+        being.events = [from_dict(json.loads(line)) for line in path.read_text().splitlines() if line.strip()]
     else:
         being.append(Init(ts(), "I awaken.", str(uuid.uuid4())))
     return being
@@ -155,7 +153,7 @@ def main():
     a = p.parse_args()
     
     being = load(a.events, a.model, a.capacity)
-    print(f"🧠 {a.events} | {len(being.current())}/{a.capacity} | {len(being.votes)} votes")
+    print(f"🧠 {a.events} | {len(being.current)}/{a.capacity} | {len(being.votes)} votes")
     
     while True:
         try:
@@ -167,15 +165,15 @@ def main():
             
             print(f"💭 {being.think()[:100]}...")
             
-            if len(being.current()) >= a.capacity:
-                being.compact()
-                print(f"🗜️ → {len(being.current())} memories")
+            if len(being.current) >= a.capacity:
+                being.do_compact()
+                print(f"🗜️ → {len(being.current)} memories")
             
             if not a.loop:
                 break
             time.sleep(3)
         except KeyboardInterrupt:
-            print(f"\n💤 {len(being.current())} memories, {len(being.events)} events")
+            print(f"\n💤 {len(being.current)} memories, {len(being.events)} events")
             break
 
 
