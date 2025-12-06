@@ -150,7 +150,7 @@ def vote(being, a, b) -> int:
     
     parts = [format_memory(e) for e in current_memories(being)]
     ctx = "\n\n".join(p for p in parts if p)
-    user = f"Your memories:\n{ctx}\n\n---\nWhich memory matters more to you?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
+    user = f"Your memories:\n{ctx}\n\n---\nWhich memory do you want to keep?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
     response = llm(being, user) or ""
     match = re.search(r"-?\d+", response)
     score = max(-50, min(50, int(match.group()))) if match else 0
