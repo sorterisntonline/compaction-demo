@@ -10,11 +10,13 @@ class TestFormatMemory:
         assert format_memory(Perception(1, "ping", "p1")) == "<message>ping</message>"
         assert format_memory(Response(1, "pong", "r1")) == "<response>pong</response>"
 
-    def test_unknown_event_type_returns_none(self):
+    def test_unknown_event_type_raises(self):
+        import pytest
         class Dummy:
             pass
 
-        assert format_memory(Dummy()) is None
+        with pytest.raises(ValueError, match="Unknown memory type"):
+            format_memory(Dummy())
 
 
 class TestStripTags:

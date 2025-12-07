@@ -88,7 +88,7 @@ def system_prompt(being):
     return f"You are a being with finite memory.\n\n{codebase.read_text()}"
 
 
-def format_memory(e) -> str | None:
+def format_memory(e) -> str:
     """Format memory with identity tags."""
     match e:
         case Thought(content=content):
@@ -99,14 +99,16 @@ def format_memory(e) -> str | None:
             return f"<response>{content}</response>"
         case Declaration(content=content):
             return f"<declaration>{content}</declaration>"
+        case Init():
+            return ""  # Init has no content to format
         case _:
-            return None
+            raise ValueError(f"Unknown memory type: {type(e)}")
 
 
 def build_prompt(being, tag: str = None) -> str:
     """Build prompt from memories. If tag provided, opens it as invitation."""
     parts = [format_memory(e) for e in current_memories(being)]
-    ctx = "\n\n".join(p for p in parts if p)
+    ctx = "\n\n".join(p for p in parts if p)  # filter empty strings
     prompt = f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
     if tag:
         prompt += f"\n\nSpeak only for yourself. One turn.\n\n<{tag}>"
@@ -128,29 +130,32 @@ def append(being, event):
     apply_event(being, event)
 
 
-def llm(being, user: str, temp: float = 0.7, model: str = None, system: str = None) -> str:
-    use_model = model or being.model
-    if not use_model:
-        raise ValueError(f"No model specified for {being.path}. Set 'model' field in Init event.")
-    use_system = system or system_prompt(being)
+def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
+    """Call LLM. Raises if response is empty."""
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": use_model, "temperature": temp, "max_tokens": 4000,
-              "messages": [{"role": "system", "content": use_system},
+        json={"model": model, "temperature": temp, "max_tokens": 4000,
+              "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": user}]},
         timeout=120.0,
     )
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip()
+    content = r.json()["choices"][0]["message"]["content"].strip()
+    if not content:
+        raise ValueError(f"LLM returned empty response")
+    return content
 
 
 def vote(being, a, b) -> int:
     """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a).
     
-    Subconscious voting: third-person formatting, fiction framing.
-    Uses vote_model if set, otherwise main model.
+    Subconscious voting: fiction framing, separate model.
+    Requires vote_model to be set.
     """
+    if not being.vote_model:
+        raise ValueError(f"vote_model not set for {being.path}. Subconscious requires its own model.")
+    
     votes = being.votes
     key = frozenset({a.id, b.id})
     if key in votes:
@@ -159,8 +164,8 @@ def vote(being, a, b) -> int:
     declaration = being.declaration
     
     decl_text = f"\n\nThe character's instructions for their subconscious:\n{declaration.content}" if declaration else ""
-    a_text = format_memory(a) or a.content
-    b_text = format_memory(b) or b.content
+    a_text = format_memory(a)
+    b_text = format_memory(b)
     
     user = f"""You are helping curate memories for a fictional character.{decl_text}
 
@@ -175,17 +180,24 @@ When uncertain, prefer keeping.
 Score -50 (strongly prefer B) to +50 (strongly prefer A)."""
     
     system = "You are a memory curator for a fictional narrative. Score which memory is more important to keep."
-    response = llm(being, user, model=being.vote_model or being.model, system=system) or ""
+    response = llm(being.vote_model, system, user)
     
     match = re.search(r"-?\d+", response)
-    score = max(-50, min(50, int(match.group()))) if match else 0
+    if not match:
+        print(f"⚠️ No score in vote response, retrying: {response[:100]}")
+        response = llm(being.vote_model, system, user)
+        match = re.search(r"-?\d+", response)
+        if not match:
+            raise ValueError(f"Vote failed to produce score after retry: {response[:200]}")
+    
+    score = max(-50, min(50, int(match.group())))
     
     append(being, Vote(ts(), a.id, b.id, score, response))
     return score
 
 
 def think(being) -> str:
-    raw = llm(being, build_prompt(being, tag="thought"), temp=0.9)
+    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="thought"), temp=0.9)
     thought = strip_tags(raw)
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
@@ -196,12 +208,12 @@ def receive(being, message: str) -> str:
     
     # Handle !declaration command - being writes instructions to their subconscious
     if message.strip() == "!declaration":
-        raw = llm(being, build_prompt(being, tag="declaration"))
+        raw = llm(being.model, system_prompt(being), build_prompt(being, tag="declaration"))
         declaration = strip_tags(raw)
         append(being, Declaration(ts(), declaration, str(uuid.uuid4())))
         return declaration
     
-    raw = llm(being, build_prompt(being, tag="response"))
+    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"))
     response = strip_tags(raw)
     append(being, Response(ts(), response, str(uuid.uuid4())))
     return response
@@ -232,8 +244,8 @@ def compact(being):
     Recoverable: uses existing votes first, only adds edges to connect graph.
     Declaration is immune - never included in voting.
     """
-    # Exclude Declaration from voting (immune)
-    mems = [m for m in current_memories(being) if not isinstance(m, Declaration)]
+    # Exclude Declaration and Init from voting (immune)
+    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init))]
     budget = being.capacity // 2
     if len(mems) <= budget:
         return
@@ -349,7 +361,7 @@ def step(being) -> bool:
     match being.events[-1]:
         case Perception():
             print(f"📨 Pending perception, generating response...")
-            raw = llm(being, build_prompt(being, tag="response"))
+            raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"))
             response = strip_tags(raw)
             append(being, Response(ts(), response, str(uuid.uuid4())))
             print(response)

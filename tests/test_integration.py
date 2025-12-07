@@ -54,8 +54,8 @@ def test_compact_with_stubbed_vote(monkeypatch, tmp_path):
     compact(being2)
     kept_ids_2 = set(being2.current.keys())
 
-    # Capacity=4 -> budget=2 after compaction
-    assert len(being1.current) == 2
-    assert len(being2.current) == 2
+    # Capacity=4 -> budget=2 after compaction, plus Init (immune)
+    assert len(being1.current) == 3  # 2 kept + Init
+    assert len(being2.current) == 3
     # Deterministic outcome across runs with same seed
     assert kept_ids_1 == kept_ids_2

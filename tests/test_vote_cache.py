@@ -16,7 +16,7 @@ def test_vote_uses_cache_when_present(monkeypatch):
 
     monkeypatch.setattr("adam.llm", fake_llm)
 
-    being = Being(path=Path("/dev/null"), model="m", capacity=5)
+    being = Being(path=Path("/dev/null"), model="m", capacity=5, vote_model="vote-m")
     a = Thought(1, "A", "a")
     b = Thought(2, "B", "b")
 
