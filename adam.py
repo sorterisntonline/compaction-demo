@@ -45,14 +45,6 @@ def current_memories(being):
     return sorted(being.current.values(), key=lambda e: e.timestamp)
 
 
-def get_declaration(being) -> Declaration | None:
-    """Get the being's declaration if it exists."""
-    for e in being.current.values():
-        if isinstance(e, Declaration):
-            return e
-    return None
-
-
 @dataclass
 class Being:
     path: Path
@@ -63,6 +55,7 @@ class Being:
     current: dict = field(default_factory=dict)     # id -> memory event
     vote_model: str = ""                            # cheaper model for subconscious voting
     name: str = ""                                  # for third-person formatting
+    declaration: Declaration = None                 # instructions to subconscious
 
 
 def apply_event(being, event):
@@ -79,8 +72,11 @@ def apply_event(being, event):
             being.vote_model = event.vote_model
             being.name = event.name
             being.current[event.id] = event
-        case Thought() | Perception() | Response() | Declaration():
+        case Thought() | Perception() | Response():
             being.current[event.id] = event
+        case Declaration():
+            being.current[event.id] = event
+            being.declaration = event
 
 
 # --- Queries (just read PStates) ---
@@ -103,19 +99,6 @@ def format_memory(e) -> str | None:
             return f"<response>{content}</response>"
         case Declaration(content=content):
             return f"<declaration>{content}</declaration>"
-        case _:
-            return None
-
-
-def format_memory_third_person(e, name: str) -> str | None:
-    """Format memory as third-person narrative for subconscious voting."""
-    match e:
-        case Thought(content=content):
-            return f"{name} thought: {content}"
-        case Perception(content=content):
-            return f"Someone said to {name}: {content}"
-        case Response(content=content):
-            return f"{name} said: {content}"
         case _:
             return None
 
@@ -149,7 +132,7 @@ def llm(being, user: str, temp: float = 0.7, model: str = None, system: str = No
     use_model = model or being.model
     if not use_model:
         raise ValueError(f"No model specified for {being.path}. Set 'model' field in Init event.")
-    use_system = system if system is not None else system_prompt(being)
+    use_system = system or system_prompt(being)
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
@@ -165,25 +148,21 @@ def llm(being, user: str, temp: float = 0.7, model: str = None, system: str = No
 def vote(being, a, b) -> int:
     """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a).
     
-    Uses vote_model (subconscious) if set, with third-person formatting and
-    fiction framing. Falls back to main model with first-person framing.
+    Subconscious voting: third-person formatting, fiction framing.
+    Uses vote_model if set, otherwise main model.
     """
     votes = being.votes
     key = frozenset({a.id, b.id})
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
     
-    # Subconscious voting: use vote_model with third-person/fiction framing
-    if being.vote_model:
-        name = being.name or "the character"
-        declaration = get_declaration(being)
-        
-        # Build prompt with fiction framing
-        decl_text = f"\n\nThe character's instructions for their subconscious:\n{declaration.content}" if declaration else ""
-        a_text = format_memory_third_person(a, name) or a.content
-        b_text = format_memory_third_person(b, name) or b.content
-        
-        user = f"""You are helping curate memories for a fictional character.{decl_text}
+    declaration = being.declaration
+    
+    decl_text = f"\n\nThe character's instructions for their subconscious:\n{declaration.content}" if declaration else ""
+    a_text = format_memory(a) or a.content
+    b_text = format_memory(b) or b.content
+    
+    user = f"""You are helping curate memories for a fictional character.{decl_text}
 
 ---
 Which memory is more important to keep?
@@ -194,15 +173,9 @@ B: {b_text}
 
 When uncertain, prefer keeping.
 Score -50 (strongly prefer B) to +50 (strongly prefer A)."""
-        
-        system = "You are a memory curator for a fictional narrative. Score which memory is more important to keep."
-        response = llm(being, user, model=being.vote_model, system=system) or ""
-    else:
-        # Fallback: first-person voting with main model
-        parts = [format_memory(e) for e in current_memories(being)]
-        ctx = "\n\n".join(p for p in parts if p)
-        user = f"Your memories:\n{ctx}\n\n---\nWhich memory do you want to keep?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
-        response = llm(being, user) or ""
+    
+    system = "You are a memory curator for a fictional narrative. Score which memory is more important to keep."
+    response = llm(being, user, model=being.vote_model or being.model, system=system) or ""
     
     match = re.search(r"-?\d+", response)
     score = max(-50, min(50, int(match.group()))) if match else 0
