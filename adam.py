@@ -182,12 +182,6 @@ def think(being) -> str:
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
     
-    if message.strip() == "!declaration":
-        raw = llm(being.model, system_prompt(being), build_prompt(being, tag="declaration"))
-        declaration = strip_tags(raw)
-        append(being, Declaration(ts(), declaration, str(uuid.uuid4())))
-        return declaration
-    
     raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"))
     response = strip_tags(raw)
     
