@@ -21,8 +21,7 @@ class Init:
     id: str
     capacity: int = 100
     model: str = ""
-    vote_model: str = ""  # cheaper model for subconscious voting
-    name: str = ""        # for third-person formatting in votes
+    vote_model: str = ""  # model for subconscious voting
 
 
 @event

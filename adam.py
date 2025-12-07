@@ -53,8 +53,7 @@ class Being:
     events: list = field(default_factory=list)
     votes: dict = field(default_factory=dict)       # frozenset{a,b} -> score
     current: dict = field(default_factory=dict)     # id -> memory event
-    vote_model: str = ""                            # cheaper model for subconscious voting
-    name: str = ""                                  # for third-person formatting
+    vote_model: str = ""                            # model for subconscious voting
     declaration: Declaration = None                 # instructions to subconscious
 
 
@@ -70,7 +69,6 @@ def apply_event(being, event):
             being.capacity = capacity
             being.model = model
             being.vote_model = event.vote_model
-            being.name = event.name
             being.current[event.id] = event
         case Thought() | Perception() | Response():
             being.current[event.id] = event
@@ -367,13 +365,11 @@ def cmd_init(args):
     if path.exists():
         print(f"❌ {path} already exists")
         sys.exit(1)
-    being = Being(path, args.model, args.capacity, vote_model=args.vote_model, name=args.name)
-    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model, args.vote_model, args.name))
+    being = Being(path, args.model, args.capacity, vote_model=args.vote_model)
+    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model, args.vote_model))
     info = f"🧠 Created {path} | {args.model}"
     if args.vote_model:
         info += f" | vote: {args.vote_model}"
-    if args.name:
-        info += f" | {args.name}"
     info += f" | capacity {args.capacity}"
     print(info)
 
@@ -426,8 +422,7 @@ def main():
     init_p = sub.add_parser("init", help="Create new being")
     init_p.add_argument("file", type=Path)
     init_p.add_argument("--model", required=True, help="Main model (consciousness)")
-    init_p.add_argument("--vote-model", default="", help="Cheaper model for voting (subconscious)")
-    init_p.add_argument("--name", default="", help="Being's name for third-person formatting")
+    init_p.add_argument("--vote-model", default="", help="Model for voting (subconscious)")
     init_p.add_argument("--capacity", type=int, required=True)
     
     # run subcommand (default)
