@@ -134,7 +134,16 @@ def vote(being, a, b) -> int:
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
     
-    user = f"""Which memory is more important to keep?
+    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init, Vote, Compaction))]
+    context = "\n\n".join(format_memory(m) for m in mems)
+    
+    user = f"""All memories currently under consideration:
+
+{context}
+
+---
+
+Which of these two is more important to keep?
 
 A: {format_memory(a)}
 
@@ -205,7 +214,7 @@ def find_components(nodes, edges):
 
 
 def compact(being):
-    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init))]
+    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init, Vote, Compaction))]
     budget = being.capacity // 2
     if len(mems) <= budget:
         return
