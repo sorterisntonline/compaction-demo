@@ -271,14 +271,6 @@ def compact(being):
     append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
 
-def maybe_compact(being) -> bool:
-    if len(current_memories(being)) >= being.capacity:
-        compact(being)
-        print(f"🗜️ → {len(current_memories(being))} memories")
-        return True
-    return False
-
-
 def load(path: Path) -> Being:
     if not path.exists():
         raise ValueError(f"{path} does not exist. Use 'init' to create.")
@@ -365,28 +357,24 @@ def cmd_run(args):
     
     if args.step:
         step(being)
-        maybe_compact(being)
         return
     
     if args.loop:
         while True:
             try:
                 print(think(being))
-                maybe_compact(being)
                 time.sleep(3)
             except KeyboardInterrupt:
                 print(f"\n💤 {len(current_memories(being))} memories, {len(being.events)} events")
                 break
     elif args.message:
         print(receive(being, args.message))
-        maybe_compact(being)
     else:
         msg = editor_input()
         if msg is None:
             print("(empty, cancelled)")
             sys.exit(1)
         print(receive(being, msg))
-        maybe_compact(being)
 
 
 def main():
