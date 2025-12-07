@@ -1,7 +1,3 @@
-"""
-Tagged union serialization for dataclasses.
-"""
-
 from dataclasses import dataclass, fields, asdict
 
 VERSION = 2
@@ -9,7 +5,6 @@ _registry: dict[str, type] = {}
 
 
 def event(cls):
-    """Register a dataclass as an event variant."""
     _registry[cls.__name__.lower()] = cls
     return dataclass(frozen=True)(cls)
 
@@ -21,7 +16,7 @@ class Init:
     id: str
     capacity: int = 100
     model: str = ""
-    vote_model: str = ""  # model for subconscious voting
+    vote_model: str = ""
 
 
 @event
@@ -47,11 +42,6 @@ class Response:
 
 @event
 class Declaration:
-    """Being's instructions to their subconscious for memory voting.
-    
-    Written by the being when they understand the mechanism. Immune to compaction.
-    Used in vote prompts to guide the cheaper vote_model.
-    """
     timestamp: int
     content: str
     id: str
@@ -81,7 +71,6 @@ def to_dict(e: Event) -> dict:
 
 
 def from_dict(d: dict) -> Event:
-    # Migration: memory_id -> id
     if "memory_id" in d:
         d["id"] = d.pop("memory_id")
     cls = _registry[d["type"]]

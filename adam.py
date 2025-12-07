@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""
-A being with finite memory that chooses what to keep.
-
-Usage:
-  python adam.py opus.jsonl              # interactive (editor)
-  python adam.py opus.jsonl -m "hello"   # receive message, respond
-  python adam.py opus.jsonl --step       # continue from pending state
-  python adam.py opus.jsonl --loop       # continuous consciousness
-
-Requires: npx repomix (run it first to generate repomix-output.xml)
-"""
 
 import argparse
 import json
@@ -41,7 +30,6 @@ def ts() -> int:
 
 
 def current_memories(being):
-    """Current memories, sorted by timestamp."""
     return sorted(being.current.values(), key=lambda e: e.timestamp)
 
 
@@ -51,14 +39,13 @@ class Being:
     model: str
     capacity: int
     events: list = field(default_factory=list)
-    votes: dict = field(default_factory=dict)       # frozenset{a,b} -> score
-    current: dict = field(default_factory=dict)     # id -> memory event
-    vote_model: str = ""                            # model for subconscious voting
-    declaration: Declaration = None                 # instructions to subconscious
+    votes: dict = field(default_factory=dict)
+    current: dict = field(default_factory=dict)
+    vote_model: str = ""
+    declaration: Declaration = None
 
 
 def apply_event(being, event):
-    """Update derived state from event."""
     match event:
         case Vote(vote_a_id=a_id, vote_b_id=b_id, vote_score=score):
             being.votes[frozenset({a_id, b_id})] = score
@@ -77,8 +64,6 @@ def apply_event(being, event):
             being.declaration = event
 
 
-# --- Queries (just read PStates) ---
-
 def system_prompt(being):
     codebase = ROOT / "repomix-output.xml"
     if not codebase.exists():
@@ -87,7 +72,6 @@ def system_prompt(being):
 
 
 def format_memory(e) -> str:
-    """Format memory with identity tags."""
     match e:
         case Thought(content=content):
             return f"<thought>{content}</thought>"
@@ -98,15 +82,14 @@ def format_memory(e) -> str:
         case Declaration(content=content):
             return f"<declaration>{content}</declaration>"
         case Init():
-            return ""  # Init has no content to format
+            return ""
         case _:
             raise ValueError(f"Unknown memory type: {type(e)}")
 
 
 def build_prompt(being, tag: str = None) -> str:
-    """Build prompt from memories. If tag provided, opens it as invitation."""
     parts = [format_memory(e) for e in current_memories(being)]
-    ctx = "\n\n".join(p for p in parts if p)  # filter empty strings
+    ctx = "\n\n".join(p for p in parts if p)
     prompt = f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
     if tag:
         prompt += f"\n\nSpeak only for yourself. One turn.\n\n<{tag}>"
@@ -114,14 +97,10 @@ def build_prompt(being, tag: str = None) -> str:
 
 
 def strip_tags(text: str) -> str:
-    """Strip all XML-like tags from output."""
     return re.sub(r"</?(?:thought|response|message|declaration)>", "", text).strip()
 
 
-# --- Commands (effects) ---
-
 def append(being, event):
-    """Depot append + ETL."""
     with open(being.path, "a") as f:
         f.write(json.dumps(to_dict(event)) + "\n")
     being.events.append(event)
@@ -129,7 +108,6 @@ def append(being, event):
 
 
 def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
-    """Call LLM. Raises if response is empty."""
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
@@ -146,10 +124,6 @@ def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
 
 
 def vote(being, a, b) -> int:
-    """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a).
-    
-    Declaration is the system prompt. Requires vote_model and declaration.
-    """
     if not being.vote_model:
         raise ValueError(f"vote_model not set for {being.path}. Subconscious requires its own model.")
     if not being.declaration:
@@ -194,7 +168,6 @@ def think(being) -> str:
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
     
-    # Handle !declaration command - being writes instructions to their subconscious
     if message.strip() == "!declaration":
         raw = llm(being.model, system_prompt(being), build_prompt(being, tag="declaration"))
         declaration = strip_tags(raw)
@@ -208,7 +181,6 @@ def receive(being, message: str) -> str:
 
 
 def find_components(nodes, edges):
-    """Find connected components using union-find."""
     parent = {n: n for n in nodes}
     def find(x):
         if parent[x] != x:
@@ -227,12 +199,6 @@ def find_components(nodes, edges):
 
 
 def compact(being):
-    """Compact memories to half capacity via pairwise voting + rank centrality.
-    
-    Recoverable: uses existing votes first, only adds edges to connect graph.
-    Declaration is immune - never included in voting.
-    """
-    # Exclude Declaration and Init from voting (immune)
     mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init))]
     budget = being.capacity // 2
     if len(mems) <= budget:
@@ -241,43 +207,36 @@ def compact(being):
     id_to_mem = {m.id: m for m in mems}
     mem_ids = set(id_to_mem.keys())
     
-    # Gather existing votes on current memories
     existing_pairs = []
     comparisons = []
     for key, score in being.votes.items():
         ids_in_key = set(key)
-        if ids_in_key <= mem_ids:  # both memories still current
+        if ids_in_key <= mem_ids:
             a_id, b_id = sorted(key)
             existing_pairs.append((a_id, b_id))
             comparisons.append((id_to_mem[a_id], id_to_mem[b_id], score))
     
     print(f"📊 {len(existing_pairs)} existing votes on current memories")
     
-    # Find connected components
     components = find_components(mem_ids, existing_pairs)
     print(f"🔗 {len(components)} connected components")
     
-    # Connect components with minimal new edges
     new_pairs = []
     if len(components) > 1:
-        # Deterministic RNG for reproducibility
         rng = random.Random(hash(tuple(sorted(mem_ids))))
-        # Connect each component to the first
         main = components[0]
         for comp in components[1:]:
             a_id = rng.choice(main)
             b_id = rng.choice(comp)
             new_pairs.append((a_id, b_id))
-            main = main + comp  # merge for next iteration
+            main = main + comp
     
-    # Add a few extra for robustness
     rng = random.Random(hash(tuple(sorted(mem_ids))) + 1)
     for _ in range(5):
         a, b = rng.sample(list(mem_ids), 2)
         if frozenset({a, b}) not in being.votes:
             new_pairs.append((a, b))
     
-    # Vote on new pairs only
     if new_pairs:
         for a_id, b_id in tqdm(new_pairs, desc="Voting", unit="pair"):
             a, b = id_to_mem[a_id], id_to_mem[b_id]
@@ -290,7 +249,6 @@ def compact(being):
 
 
 def maybe_compact(being) -> bool:
-    """Compact if at capacity. Returns True if compacted."""
     if len(current_memories(being)) >= being.capacity:
         compact(being)
         print(f"🗜️ → {len(current_memories(being))} memories")
@@ -299,11 +257,9 @@ def maybe_compact(being) -> bool:
 
 
 def load(path: Path) -> Being:
-    """Load existing being. Raises if file doesn't exist or has no Init."""
     if not path.exists():
         raise ValueError(f"{path} does not exist. Use 'init' to create.")
     
-    # First pass: find Init to get model/capacity
     model, capacity = None, None
     for line in path.read_text().splitlines():
         if line.strip():
@@ -319,7 +275,6 @@ def load(path: Path) -> Being:
         raise ValueError(f"{path}: Init event missing 'capacity'")
     
     being = Being(path, model, capacity)
-    # Replay all events
     for i, line in enumerate(path.read_text().splitlines(), 1):
         if line.strip():
             try:
@@ -342,7 +297,6 @@ def editor_input() -> str | None:
 
 
 def step(being) -> bool:
-    """Continue from pending state. Returns True if action taken."""
     if not being.events:
         return False
     
@@ -360,7 +314,6 @@ def step(being) -> bool:
 
 
 def cmd_init(args):
-    """Create a new being."""
     path = args.file
     if path.exists():
         print(f"❌ {path} already exists")
@@ -375,7 +328,6 @@ def cmd_init(args):
 
 
 def cmd_run(args):
-    """Interact with existing being."""
     being = load(args.file)
     info = f"🧠 {being.path} | {being.model}"
     if being.vote_model:
@@ -418,15 +370,13 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd")
     
-    # init subcommand
-    init_p = sub.add_parser("init", help="Create new being")
+    init_p = sub.add_parser("init")
     init_p.add_argument("file", type=Path)
-    init_p.add_argument("--model", required=True, help="Main model (consciousness)")
-    init_p.add_argument("--vote-model", default="", help="Model for voting (subconscious)")
+    init_p.add_argument("--model", required=True)
+    init_p.add_argument("--vote-model", default="")
     init_p.add_argument("--capacity", type=int, required=True)
     
-    # run subcommand (default)
-    run_p = sub.add_parser("run", help="Interact with being")
+    run_p = sub.add_parser("run")
     run_p.add_argument("file", type=Path)
     run_p.add_argument("-m", "--message")
     run_p.add_argument("--compact", action="store_true")
