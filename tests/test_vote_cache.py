@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from adam import Being, vote
-from schema import Thought
+from schema import Declaration, Thought
 
 
 def test_vote_uses_cache_when_present(monkeypatch):
@@ -17,6 +17,7 @@ def test_vote_uses_cache_when_present(monkeypatch):
     monkeypatch.setattr("adam.llm", fake_llm)
 
     being = Being(path=Path("/dev/null"), model="m", capacity=5, vote_model="vote-m")
+    being.declaration = Declaration(1, "Keep important memories.", "decl-id")
     a = Thought(1, "A", "a")
     b = Thought(2, "B", "b")
 

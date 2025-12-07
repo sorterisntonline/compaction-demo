@@ -150,42 +150,32 @@ def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
 def vote(being, a, b) -> int:
     """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a).
     
-    Subconscious voting: fiction framing, separate model.
-    Requires vote_model to be set.
+    Declaration is the system prompt. Requires vote_model and declaration.
     """
     if not being.vote_model:
         raise ValueError(f"vote_model not set for {being.path}. Subconscious requires its own model.")
+    if not being.declaration:
+        raise ValueError(f"No declaration for {being.path}. Being must write !declaration before compaction.")
     
     votes = being.votes
     key = frozenset({a.id, b.id})
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
     
-    declaration = being.declaration
-    
-    decl_text = f"\n\nThe character's instructions for their subconscious:\n{declaration.content}" if declaration else ""
-    a_text = format_memory(a)
-    b_text = format_memory(b)
-    
-    user = f"""You are helping curate memories for a fictional character.{decl_text}
+    user = f"""Which memory is more important to keep?
 
----
-Which memory is more important to keep?
+A: {format_memory(a)}
 
-A: {a_text}
+B: {format_memory(b)}
 
-B: {b_text}
-
-When uncertain, prefer keeping.
 Score -50 (strongly prefer B) to +50 (strongly prefer A)."""
     
-    system = "You are a memory curator for a fictional narrative. Score which memory is more important to keep."
-    response = llm(being.vote_model, system, user)
+    response = llm(being.vote_model, being.declaration.content, user)
     
     match = re.search(r"-?\d+", response)
     if not match:
         print(f"⚠️ No score in vote response, retrying: {response[:100]}")
-        response = llm(being.vote_model, system, user)
+        response = llm(being.vote_model, being.declaration.content, user)
         match = re.search(r"-?\d+", response)
         if not match:
             raise ValueError(f"Vote failed to produce score after retry: {response[:200]}")
