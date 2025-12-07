@@ -10,3 +10,4 @@ pyproject.toml
 consensual_memory/__init__.py
 .claude/settings.local.json
 .gitignore
+docs/*
