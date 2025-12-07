@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from consensual_memory.rank import rank_from_comparisons
 from schema import Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict, to_dict
@@ -107,6 +108,7 @@ def append(being, event):
     apply_event(being, event)
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -258,7 +260,10 @@ def compact(being):
     if new_pairs:
         for a_id, b_id in tqdm(new_pairs, desc="Voting", unit="pair"):
             a, b = id_to_mem[a_id], id_to_mem[b_id]
-            comparisons.append((a, b, vote(being, a, b)))
+            try:
+                comparisons.append((a, b, vote(being, a, b)))
+            except Exception as e:
+                print(f"⚠️ Vote failed after retries, skipping: {e}")
     
     ranked = rank_from_comparisons(mems, comparisons)
     
