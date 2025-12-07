@@ -149,19 +149,22 @@ A: {format_memory(a)}
 
 B: {format_memory(b)}
 
-Score -50 (strongly prefer B) to +50 (strongly prefer A)."""
+First, reason through which memory matters more.
+Then, at the end, output your score:
+  - POSITIVE (up to +50) if you prefer A
+  - NEGATIVE (down to -50) if you prefer B"""
     
     response = llm(being.vote_model, being.declaration.content, user)
     
-    match = re.search(r"-?\d+", response)
-    if not match:
+    matches = re.findall(r"-?\d+", response)
+    if not matches:
         print(f"⚠️ No score in response, retrying: {response[:100]}")
         response = llm(being.vote_model, being.declaration.content, user)
-        match = re.search(r"-?\d+", response)
-        if not match:
+        matches = re.findall(r"-?\d+", response)
+        if not matches:
             raise ValueError(f"Vote failed to produce score after retry: {response[:200]}")
     
-    score = max(-50, min(50, int(match.group())))
+    score = max(-50, min(50, int(matches[-1])))
     
     append(being, Vote(ts(), a.id, b.id, score, response))
     return score
