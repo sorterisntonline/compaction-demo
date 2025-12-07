@@ -450,16 +450,6 @@ def main():
     
     args = p.parse_args()
     
-    # Handle no subcommand - treat first arg as file for 'run'
-    if args.cmd is None:
-        # Re-parse with run as default
-        if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
-            sys.argv.insert(1, "run")
-            args = p.parse_args()
-        else:
-            p.print_help()
-            sys.exit(1)
-    
     if args.cmd == "init":
         cmd_init(args)
     elif args.cmd == "run":
@@ -467,6 +457,9 @@ def main():
             print("❌ --message and --loop are mutually exclusive")
             sys.exit(1)
         cmd_run(args)
+    else:
+        p.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
