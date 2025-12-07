@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from python_hiccup.html import render
 
-from schema import Event, Init, Thought, Perception, Response, Vote, Compaction, from_dict
+from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 # Root of the project
 ROOT = Path(__file__).parent
@@ -155,6 +155,7 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
         "thought": "#7b68ee",
         "perception": "#50c878",
         "response": "#ff6b6b",
+        "declaration": "#ffd700",  # gold - instructions to subconscious
         "compaction": "#ffa500",
         "vote": "#e066ff"
     }
@@ -227,7 +228,7 @@ def render_being_page(being_file: str) -> str:
     memory_count = 0
 
     for event in events:
-        if isinstance(event, (Init, Thought, Perception, Response)):
+        if isinstance(event, (Init, Thought, Perception, Response, Declaration)):
             memory_count += 1
         elif isinstance(event, Compaction):
             if event.released_ids:
@@ -257,7 +258,7 @@ def render_being_page(being_file: str) -> str:
     # Build memory lookup for vote events (id -> content)
     memory_lookup = {}
     for e in events:
-        if isinstance(e, (Init, Thought, Perception, Response)):
+        if isinstance(e, (Init, Thought, Perception, Response, Declaration)):
             memory_lookup[e.id] = e.content
 
     # Reverse event list - newest first
@@ -319,7 +320,7 @@ async def get_stats(being_file: str):
     memories = {}
 
     for event in events:
-        if isinstance(event, (Init, Thought, Perception, Response)):
+        if isinstance(event, (Init, Thought, Perception, Response, Declaration)):
             memories[event.id] = event.content
         elif isinstance(event, Compaction):
             if event.released_ids:

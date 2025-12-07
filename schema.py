@@ -21,6 +21,8 @@ class Init:
     id: str
     capacity: int = 100
     model: str = ""
+    vote_model: str = ""  # cheaper model for subconscious voting
+    name: str = ""        # for third-person formatting in votes
 
 
 @event
@@ -45,6 +47,18 @@ class Response:
 
 
 @event
+class Declaration:
+    """Being's instructions to their subconscious for memory voting.
+    
+    Written by the being when they understand the mechanism. Immune to compaction.
+    Used in vote prompts to guide the cheaper vote_model.
+    """
+    timestamp: int
+    content: str
+    id: str
+
+
+@event
 class Vote:
     timestamp: int
     vote_a_id: str
@@ -60,7 +74,7 @@ class Compaction:
     released_ids: list[str]
 
 
-Event = Init | Thought | Perception | Response | Vote | Compaction
+Event = Init | Thought | Perception | Response | Declaration | Vote | Compaction
 
 
 def to_dict(e: Event) -> dict:

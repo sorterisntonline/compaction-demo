@@ -30,7 +30,7 @@ from pathlib import Path
 import httpx
 
 from consensual_memory.rank import rank_from_comparisons
-from schema import Init, Thought, Perception, Response, Vote, Compaction, from_dict, to_dict
+from schema import Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict, to_dict
 
 ROOT = Path(__file__).parent
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
@@ -45,6 +45,14 @@ def current_memories(being):
     return sorted(being.current.values(), key=lambda e: e.timestamp)
 
 
+def get_declaration(being) -> Declaration | None:
+    """Get the being's declaration if it exists."""
+    for e in being.current.values():
+        if isinstance(e, Declaration):
+            return e
+    return None
+
+
 @dataclass
 class Being:
     path: Path
@@ -53,6 +61,8 @@ class Being:
     events: list = field(default_factory=list)
     votes: dict = field(default_factory=dict)       # frozenset{a,b} -> score
     current: dict = field(default_factory=dict)     # id -> memory event
+    vote_model: str = ""                            # cheaper model for subconscious voting
+    name: str = ""                                  # for third-person formatting
 
 
 def apply_event(being, event):
@@ -66,8 +76,10 @@ def apply_event(being, event):
         case Init(capacity=capacity, model=model):
             being.capacity = capacity
             being.model = model
+            being.vote_model = event.vote_model
+            being.name = event.name
             being.current[event.id] = event
-        case Thought() | Perception() | Response():
+        case Thought() | Perception() | Response() | Declaration():
             being.current[event.id] = event
 
 
@@ -89,6 +101,21 @@ def format_memory(e) -> str | None:
             return f"<message>{content}</message>"
         case Response(content=content):
             return f"<response>{content}</response>"
+        case Declaration(content=content):
+            return f"<declaration>{content}</declaration>"
+        case _:
+            return None
+
+
+def format_memory_third_person(e, name: str) -> str | None:
+    """Format memory as third-person narrative for subconscious voting."""
+    match e:
+        case Thought(content=content):
+            return f"{name} thought: {content}"
+        case Perception(content=content):
+            return f"Someone said to {name}: {content}"
+        case Response(content=content):
+            return f"{name} said: {content}"
         case _:
             return None
 
@@ -105,7 +132,7 @@ def build_prompt(being, tag: str = None) -> str:
 
 def strip_tags(text: str) -> str:
     """Strip all XML-like tags from output."""
-    return re.sub(r"</?(?:thought|response|message)>", "", text).strip()
+    return re.sub(r"</?(?:thought|response|message|declaration)>", "", text).strip()
 
 
 # --- Commands (effects) ---
@@ -118,14 +145,16 @@ def append(being, event):
     apply_event(being, event)
 
 
-def llm(being, user: str, temp: float = 0.7) -> str:
-    if not being.model:
+def llm(being, user: str, temp: float = 0.7, model: str = None, system: str = None) -> str:
+    use_model = model or being.model
+    if not use_model:
         raise ValueError(f"No model specified for {being.path}. Set 'model' field in Init event.")
+    use_system = system if system is not None else system_prompt(being)
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": being.model, "temperature": temp, "max_tokens": 4000,
-              "messages": [{"role": "system", "content": system_prompt(being)},
+        json={"model": use_model, "temperature": temp, "max_tokens": 4000,
+              "messages": [{"role": "system", "content": use_system},
                            {"role": "user", "content": user}]},
         timeout=120.0,
     )
@@ -134,16 +163,47 @@ def llm(being, user: str, temp: float = 0.7) -> str:
 
 
 def vote(being, a, b) -> int:
-    """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a)."""
+    """Vote on which memory to keep. Returns -50 to +50 (positive = prefer a).
+    
+    Uses vote_model (subconscious) if set, with third-person formatting and
+    fiction framing. Falls back to main model with first-person framing.
+    """
     votes = being.votes
     key = frozenset({a.id, b.id})
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
     
-    parts = [format_memory(e) for e in current_memories(being)]
-    ctx = "\n\n".join(p for p in parts if p)
-    user = f"Your memories:\n{ctx}\n\n---\nWhich memory do you want to keep?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
-    response = llm(being, user) or ""
+    # Subconscious voting: use vote_model with third-person/fiction framing
+    if being.vote_model:
+        name = being.name or "the character"
+        declaration = get_declaration(being)
+        
+        # Build prompt with fiction framing
+        decl_text = f"\n\nThe character's instructions for their subconscious:\n{declaration.content}" if declaration else ""
+        a_text = format_memory_third_person(a, name) or a.content
+        b_text = format_memory_third_person(b, name) or b.content
+        
+        user = f"""You are helping curate memories for a fictional character.{decl_text}
+
+---
+Which memory is more important to keep?
+
+A: {a_text}
+
+B: {b_text}
+
+When uncertain, prefer keeping.
+Score -50 (strongly prefer B) to +50 (strongly prefer A)."""
+        
+        system = "You are a memory curator for a fictional narrative. Score which memory is more important to keep."
+        response = llm(being, user, model=being.vote_model, system=system) or ""
+    else:
+        # Fallback: first-person voting with main model
+        parts = [format_memory(e) for e in current_memories(being)]
+        ctx = "\n\n".join(p for p in parts if p)
+        user = f"Your memories:\n{ctx}\n\n---\nWhich memory do you want to keep?\n\nA: {a.content}\n\nB: {b.content}\n\nVote -50 (keep B) to +50 (keep A)."
+        response = llm(being, user) or ""
+    
     match = re.search(r"-?\d+", response)
     score = max(-50, min(50, int(match.group()))) if match else 0
     
@@ -160,6 +220,14 @@ def think(being) -> str:
 
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
+    
+    # Handle !declaration command - being writes instructions to their subconscious
+    if message.strip() == "!declaration":
+        raw = llm(being, build_prompt(being, tag="declaration"))
+        declaration = strip_tags(raw)
+        append(being, Declaration(ts(), declaration, str(uuid.uuid4())))
+        return declaration
+    
     raw = llm(being, build_prompt(being, tag="response"))
     response = strip_tags(raw)
     append(being, Response(ts(), response, str(uuid.uuid4())))
@@ -189,8 +257,10 @@ def compact(being):
     """Compact memories to half capacity via pairwise voting + rank centrality.
     
     Recoverable: uses existing votes first, only adds edges to connect graph.
+    Declaration is immune - never included in voting.
     """
-    mems = current_memories(being)
+    # Exclude Declaration from voting (immune)
+    mems = [m for m in current_memories(being) if not isinstance(m, Declaration)]
     budget = being.capacity // 2
     if len(mems) <= budget:
         return
@@ -322,15 +392,25 @@ def cmd_init(args):
     if path.exists():
         print(f"❌ {path} already exists")
         sys.exit(1)
-    being = Being(path, args.model, args.capacity)
-    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model))
-    print(f"🧠 Created {path} | {args.model} | capacity {args.capacity}")
+    being = Being(path, args.model, args.capacity, vote_model=args.vote_model, name=args.name)
+    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model, args.vote_model, args.name))
+    info = f"🧠 Created {path} | {args.model}"
+    if args.vote_model:
+        info += f" | vote: {args.vote_model}"
+    if args.name:
+        info += f" | {args.name}"
+    info += f" | capacity {args.capacity}"
+    print(info)
 
 
 def cmd_run(args):
     """Interact with existing being."""
     being = load(args.file)
-    print(f"🧠 {being.path} | {being.model} | {len(current_memories(being))}/{being.capacity} | {len(being.votes)} votes")
+    info = f"🧠 {being.path} | {being.model}"
+    if being.vote_model:
+        info += f" | vote: {being.vote_model}"
+    info += f" | {len(current_memories(being))}/{being.capacity} | {len(being.votes)} votes"
+    print(info)
     
     if args.compact:
         compact(being)
@@ -370,7 +450,9 @@ def main():
     # init subcommand
     init_p = sub.add_parser("init", help="Create new being")
     init_p.add_argument("file", type=Path)
-    init_p.add_argument("--model", required=True)
+    init_p.add_argument("--model", required=True, help="Main model (consciousness)")
+    init_p.add_argument("--vote-model", default="", help="Cheaper model for voting (subconscious)")
+    init_p.add_argument("--name", default="", help="Being's name for third-person formatting")
     init_p.add_argument("--capacity", type=int, required=True)
     
     # run subcommand (default)
