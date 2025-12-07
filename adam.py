@@ -450,16 +450,17 @@ def main():
     
     args = p.parse_args()
     
-    if args.cmd == "init":
-        cmd_init(args)
-    elif args.cmd == "run":
-        if args.message and args.loop:
-            print("❌ --message and --loop are mutually exclusive")
+    match args.cmd:
+        case "init":
+            cmd_init(args)
+        case "run":
+            if args.message and args.loop:
+                print("❌ --message and --loop are mutually exclusive")
+                sys.exit(1)
+            cmd_run(args)
+        case _:
+            p.print_help()
             sys.exit(1)
-        cmd_run(args)
-    else:
-        p.print_help()
-        sys.exit(1)
 
 
 if __name__ == "__main__":
