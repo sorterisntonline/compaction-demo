@@ -123,14 +123,6 @@ def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
     return content
 
 
-# couch in fiction so that vote model doesn't get confused about who it is.
-VOTE_FRAME = """You are a memory curator helping with a creative writing project.
-
-A fictional character has written instructions for how their memories should be curated. Your job is to follow those instructions and score which memory is more important to keep.
-
-The character's instructions:
-"""
-
 def vote(being, a, b) -> int:
     if not being.vote_model:
         raise ValueError(f"vote_model not set for {being.path}.")
@@ -142,8 +134,6 @@ def vote(being, a, b) -> int:
     if key in votes:
         return votes[key] if a.id < b.id else -votes[key]
     
-    system = VOTE_FRAME + being.declaration.content
-    
     user = f"""Which memory is more important to keep?
 
 A: {format_memory(a)}
@@ -152,11 +142,11 @@ B: {format_memory(b)}
 
 Score -50 (strongly prefer B) to +50 (strongly prefer A)."""
     
-    response = llm(being.vote_model, system, user)
+    response = llm(being.vote_model, being.declaration.content, user)
     
     match = re.search(r"-?\d+", response)
     if not match:
-        print(f"⚠️ No score in vote response, retrying: {response[:100]}")
+        print(f"⚠️ No score in response, retrying: {response[:100]}")
         response = llm(being.vote_model, being.declaration.content, user)
         match = re.search(r"-?\d+", response)
         if not match:
