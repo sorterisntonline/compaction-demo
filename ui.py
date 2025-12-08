@@ -134,7 +134,7 @@ def render_index() -> str:
     
     if beings:
         being_links = [
-            ["a", {"href": f"/{b['file']}"}, 
+            ["a", {"href": f"/{b['file']}"},
              f"{b['file']} ({b['model']}, {b['events']} events, {b['capacity']} capacity)"]
             for b in beings
         ]

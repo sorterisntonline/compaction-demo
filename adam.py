@@ -46,6 +46,7 @@ class Being:
     events: list = field(default_factory=list)
     votes: dict = field(default_factory=dict)
     current: dict = field(default_factory=dict)
+    all_memories: dict = field(default_factory=dict)  # All memories ever, for transitive ranking
     vote_model: str = ""
     declaration: Declaration = None
     api_key: str = ""  # OpenRouter API key for this being
@@ -67,10 +68,13 @@ def apply_event(being, event):
             being.model = model
             being.vote_model = event.vote_model
             being.current[event.id] = event
+            being.all_memories[event.id] = event
         case Thought() | Perception() | Response():
             being.current[event.id] = event
+            being.all_memories[event.id] = event
         case Declaration():
             being.current[event.id] = event
+            being.all_memories[event.id] = event
             being.declaration = event
 
 
@@ -231,30 +235,42 @@ def find_components(nodes, edges):
 
 
 def compact(being):
-    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init, Vote, Compaction))]
+    # Types that are subject to compaction (the being's actual memories)
+    MEMORY_TYPES = (Thought, Perception, Response)
+    
+    # Current memories to rank
+    current_mems = [m for m in current_memories(being) if isinstance(m, MEMORY_TYPES)]
     budget = being.capacity // 2
-    if len(mems) <= budget:
+    if len(current_mems) <= budget:
         return
     
-    id_to_mem = {m.id: m for m in mems}
-    mem_ids = set(id_to_mem.keys())
+    current_ids = {m.id for m in current_mems}
     
+    # ALL memories ever (for transitive ranking paths)
+    all_mems = [m for m in being.all_memories.values() if isinstance(m, MEMORY_TYPES)]
+    all_id_to_mem = {m.id: m for m in all_mems}
+    all_ids = set(all_id_to_mem.keys())
+    
+    # Build comparisons using ALL votes (including those with compacted memories)
     existing_pairs = []
     comparisons = []
     for (low_id, high_id), score in being.votes.items():
-        if {low_id, high_id} <= mem_ids:
+        # Include vote if BOTH memories exist in historical record
+        if low_id in all_ids and high_id in all_ids:
             existing_pairs.append((low_id, high_id))
-            # Score is already normalized to (low, high) orientation
-            comparisons.append((id_to_mem[low_id], id_to_mem[high_id], score))
+            comparisons.append((all_id_to_mem[low_id], all_id_to_mem[high_id], score))
     
-    print(f"📊 {len(existing_pairs)} existing votes on current memories")
+    print(f"📊 {len(comparisons)} total votes ({len([p for p in existing_pairs if p[0] in current_ids and p[1] in current_ids])} on current memories)")
     
-    components = find_components(mem_ids, existing_pairs)
-    print(f"🔗 {len(components)} connected components")
+    # Find components among CURRENT memories only (for bridging)
+    current_pairs = [(a, b) for a, b in existing_pairs if a in current_ids and b in current_ids]
+    components = find_components(current_ids, current_pairs)
+    print(f"🔗 {len(components)} connected components in current memories")
     
+    # Bridge disconnected components of current memories
     new_pairs = []
     if len(components) > 1:
-        rng = random.Random(hash(tuple(sorted(mem_ids))))
+        rng = random.Random(hash(tuple(sorted(current_ids))))
         main = components[0]
         for comp in components[1:]:
             a_id = rng.choice(main)
@@ -262,24 +278,29 @@ def compact(being):
             new_pairs.append((a_id, b_id))
             main = main + comp
     
-    rng = random.Random(hash(tuple(sorted(mem_ids))) + 1)
+    # Add a few random comparisons among current memories
+    rng = random.Random(hash(tuple(sorted(current_ids))) + 1)
     for _ in range(5):
-        a, b = rng.sample(list(mem_ids), 2)
+        a, b = rng.sample(list(current_ids), 2)
         low, high = sorted([a, b])
         if (low, high) not in being.votes:
             new_pairs.append((a, b))
     
     if new_pairs:
         for a_id, b_id in tqdm(new_pairs, desc="Voting", unit="pair"):
-            a, b = id_to_mem[a_id], id_to_mem[b_id]
+            a, b = all_id_to_mem[a_id], all_id_to_mem[b_id]
             try:
                 comparisons.append((a, b, vote(being, a, b)))
             except Exception as e:
                 print(f"⚠️ Vote failed after retries, skipping: {e}")
     
-    ranked = rank_from_comparisons(mems, comparisons)
+    # Rank ALL memories (transitive info flows through historical ones)
+    ranked_all = rank_from_comparisons(all_mems, comparisons)
     
-    kept, released = ranked[:budget], ranked[budget:]
+    # Filter to only current memories, preserving rank order
+    ranked_current = [m for m in ranked_all if m.id in current_ids]
+    
+    kept, released = ranked_current[:budget], ranked_current[budget:]
     append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
 
 
