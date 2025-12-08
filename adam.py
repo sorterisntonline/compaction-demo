@@ -340,13 +340,9 @@ def cmd_init(args):
     if path.exists():
         print(f"❌ {path} already exists")
         sys.exit(1)
-    being = Being(path, args.model, args.capacity, vote_model=args.vote_model)
-    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model, args.vote_model))
-    info = f"🧠 Created {path} | {args.model}"
-    if args.vote_model:
-        info += f" | vote: {args.vote_model}"
-    info += f" | capacity {args.capacity}"
-    print(info)
+    being = Being(path, args.model, args.capacity, vote_model=args.vote_model, api_key=args.api_key)
+    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model, args.vote_model, args.api_key))
+    print(f"🧠 Created {path} | {args.model} | vote: {args.vote_model} | capacity {args.capacity}")
 
 
 def cmd_run(args):
@@ -391,8 +387,9 @@ def main():
     init_p = sub.add_parser("init")
     init_p.add_argument("file", type=Path)
     init_p.add_argument("--model", required=True)
-    init_p.add_argument("--vote-model", default="")
+    init_p.add_argument("--vote-model", required=True)
     init_p.add_argument("--capacity", type=int, required=True)
+    init_p.add_argument("--api-key", required=True)
     
     run_p = sub.add_parser("run")
     run_p.add_argument("file", type=Path)
