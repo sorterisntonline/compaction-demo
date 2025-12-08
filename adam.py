@@ -17,12 +17,16 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from consensual_memory.rank import rank_from_comparisons
 from schema import Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict, to_dict
 
 ROOT = Path(__file__).parent
+
+# Load environment variables from .env file
+load_dotenv()
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 
@@ -44,6 +48,7 @@ class Being:
     current: dict = field(default_factory=dict)
     vote_model: str = ""
     declaration: Declaration = None
+    api_key: str = ""  # OpenRouter API key for this being
 
 
 def apply_event(being, event):
@@ -109,10 +114,15 @@ def append(being, event):
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
-def llm(model: str, system: str, user: str, temp: float = 0.7) -> str:
+def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = "") -> str:
+    # Use provided api_key or fall back to environment variable
+    key = api_key or API_KEY
+    if not key:
+        raise ValueError("No API key provided. Set OPENROUTER_API_KEY in .env or pass api_key to llm()")
+    
     r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {API_KEY}"},
+        headers={"Authorization": f"Bearer {key}"},
         json={"model": model, "temperature": temp, "max_tokens": 4000,
               "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": user}]},
@@ -156,12 +166,12 @@ Then, at the end, output your score:
   - POSITIVE (up to +50) if you prefer A
   - NEGATIVE (down to -50) if you prefer B"""
     
-    response = llm(being.vote_model, being.declaration.content, user)
+    response = llm(being.vote_model, being.declaration.content, user, api_key=being.api_key)
     
     matches = re.findall(r"-?\d+", response)
     if not matches:
         print(f"⚠️ No score in response, retrying: {response[:100]}")
-        response = llm(being.vote_model, being.declaration.content, user)
+        response = llm(being.vote_model, being.declaration.content, user, api_key=being.api_key)
         matches = re.findall(r"-?\d+", response)
         if not matches:
             raise ValueError(f"Vote failed to produce score after retry: {response[:200]}")
@@ -173,7 +183,7 @@ Then, at the end, output your score:
 
 
 def think(being) -> str:
-    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="thought"), temp=0.9)
+    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="thought"), temp=0.9, api_key=being.api_key)
     thought = strip_tags(raw)
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
@@ -182,7 +192,7 @@ def think(being) -> str:
 def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
     
-    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"))
+    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"), api_key=being.api_key)
     response = strip_tags(raw)
     
     if "!declaration" in response:
@@ -269,13 +279,15 @@ def load(path: Path) -> Being:
     if not path.exists():
         raise ValueError(f"{path} does not exist. Use 'init' to create.")
     
-    model, capacity = None, None
+    model, capacity, vote_model, api_key = None, None, "", ""
     for line in path.read_text().splitlines():
         if line.strip():
             d = json.loads(line)
             if d.get("type") == "init":
                 model = d.get("model")
                 capacity = d.get("capacity")
+                vote_model = d.get("vote_model", "")
+                api_key = d.get("api_key", "")
                 break
     
     if not model:
@@ -283,7 +295,7 @@ def load(path: Path) -> Being:
     if not capacity:
         raise ValueError(f"{path}: Init event missing 'capacity'")
     
-    being = Being(path, model, capacity)
+    being = Being(path, model, capacity, api_key=api_key, vote_model=vote_model)
     for i, line in enumerate(path.read_text().splitlines(), 1):
         if line.strip():
             try:
@@ -312,7 +324,7 @@ def step(being) -> bool:
     match being.events[-1]:
         case Perception():
             print(f"📨 Pending perception, generating response...")
-            raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"))
+            raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"), api_key=being.api_key)
             response = strip_tags(raw)
             append(being, Response(ts(), response, str(uuid.uuid4())))
             print(response)

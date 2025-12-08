@@ -5,7 +5,6 @@ description = "Consensual Memory Compaction for AI Continuity"
 authors = [
     {name = "Tommy", email = "tommy@example.com"}
 ]
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24.0",
@@ -15,6 +14,7 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "python-hiccup>=0.4.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]

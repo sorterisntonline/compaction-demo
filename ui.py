@@ -9,10 +9,11 @@ from typing import List
 from dataclasses import asdict
 from datetime import datetime
 
-from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from hiccup import render, RawContent
+import traceback
 
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
@@ -22,6 +23,16 @@ BEINGS_DIR = ROOT  # Set via CLI
 
 app = FastAPI(title="Consensual Memory Viewer")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Show full stack trace for any unhandled exception"""
+    tb = traceback.format_exc()
+    return PlainTextResponse(
+        content=f"Internal Server Error\n\n{tb}",
+        status_code=500
+    )
 
 
 def get_model(init: Init) -> str:
@@ -244,7 +255,10 @@ def render_being_page(being_file: str) -> str:
 
     message_form = ["form", {"action": f"/{being_file}/send", "method": "post"},
         ["textarea", {"name": "message", "placeholder": "", "rows": "8"}],
-        ["button", {"type": "submit"}, "send"]
+        ["div", {"style": "display: flex; gap: 10px;"},
+            ["button", {"type": "submit"}, "send"],
+            ["button", {"type": "submit", "formaction": f"/{being_file}/next"}, "next"]
+        ]
     ]
 
     page = ["html",
@@ -324,6 +338,20 @@ async def send_message_form(being_file: str, message: str = Form(...)):
     return RedirectResponse(url=f"/{being_file}", status_code=303)
 
 
+@app.post("/{being_file}/next", response_class=HTMLResponse)
+async def next_thought(being_file: str):
+    """Trigger one thought cycle, redirect back to being page"""
+    from adam import load, think
+    
+    events_path = BEINGS_DIR / (being_file + ".jsonl")
+    if not events_path.exists():
+        return RedirectResponse(url="/", status_code=303)
+    
+    being = load(events_path)
+    think(being)
+    return RedirectResponse(url=f"/{being_file}", status_code=303)
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -339,4 +367,4 @@ if __name__ == "__main__":
     
     print(f"🌐 Starting Consensual Memory UI on http://localhost:{args.port}")
     print(f"📁 Serving beings from {BEINGS_DIR}")
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="debug")

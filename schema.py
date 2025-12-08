@@ -17,6 +17,7 @@ class Init:
     capacity: int = 100
     model: str = ""
     vote_model: str = ""
+    api_key: str = ""  # OpenRouter API key for this being
 
 
 @event
