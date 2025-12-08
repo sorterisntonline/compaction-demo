@@ -162,4 +162,82 @@ button.sending {
   color: var(--muted);
 }
 
+/* Memories link at bottom */
+.memories-link {
+  padding: 20px 1px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+.memories-link a {
+  color: var(--muted);
+  font-size: 18px;
+}
+.memories-link a:hover {
+  color: var(--text);
+}
+
+/* All memories page */
+.memories-list {
+  border-top: 1px solid var(--border);
+}
+.section-header {
+  padding: 10px 1px;
+  font-size: 20px;
+  font-weight: bold;
+  border-bottom: 1px solid var(--border);
+  background: var(--hover-bg);
+}
+.memory-item {
+  border-bottom: 1px solid var(--border);
+}
+.memory-item summary {
+  padding: 1px;
+  cursor: pointer;
+  font-size: 18px;
+}
+.memory-item summary:hover {
+  background: var(--hover-bg);
+}
+.memory-rank {
+  color: var(--text);
+  font-weight: bold;
+}
+.memory-status {
+  font-weight: bold;
+}
+.memory-type {
+  color: var(--muted);
+}
+.memory-time {
+  color: var(--muted);
+}
+.memory-preview {
+  color: var(--muted);
+}
+.memory-full {
+  padding: 1px;
+  white-space: pre-wrap;
+  font-size: 20px;
+  border-top: 1px solid var(--border);
+}
+.memory-id {
+  padding: 1px;
+  font-size: 14px;
+  color: var(--muted);
+  font-family: monospace;
+}
+
+/* Current vs compacted colors */
+.memory-current .memory-status {
+  background-color: #4a4;
+}
+.memory-compacted .memory-status {
+  background-color: #a44;
+}
+.memory-compacted summary {
+  opacity: 0.6;
+}
+.memory-compacted .memory-full {
+  opacity: 0.7;
+}
 

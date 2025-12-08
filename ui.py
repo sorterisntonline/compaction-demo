@@ -249,12 +249,17 @@ def render_being_page(being_file: str) -> str:
         ]
     ]
 
+    memories_link = ["div.memories-link",
+        ["a", {"href": f"/{being_file}/memories"}, "view all memories →"]
+    ]
+
     page = ["html",
         html_head(f"{being_file}"),
         ["body",
             top_bar,
             message_form,
-            ["div.events", event_list]
+            ["div.events", event_list],
+            memories_link
         ]
     ]
 
@@ -337,6 +342,110 @@ async def next_thought(being_file: str):
     being = load(events_path)
     think(being)
     return RedirectResponse(url=f"/{being_file}", status_code=303)
+
+
+def render_memories_page(being_file: str) -> str:
+    """Render a page showing all memories (current + compacted) with different colors"""
+    from adam import load
+    from consensual_memory.rank import rank_from_comparisons
+    
+    events_path = BEINGS_DIR / (being_file + ".jsonl")
+    being = load(events_path)
+    
+    # Get current memory IDs
+    current_ids = set(being.current.keys())
+    
+    # Get all memories (Thought, Perception, Response only)
+    all_mems = []
+    for e in being.events:
+        if isinstance(e, (Thought, Perception, Response)):
+            all_mems.append(e)
+    
+    # Find which memories have been voted on
+    id_to_mem = {m.id: m for m in all_mems}
+    voted_ids = set()
+    comparisons = []
+    for (low_id, high_id), score in being.votes.items():
+        if low_id in id_to_mem and high_id in id_to_mem:
+            voted_ids.add(low_id)
+            voted_ids.add(high_id)
+            comparisons.append((id_to_mem[low_id], id_to_mem[high_id], score))
+    
+    # Split into voted (rankable) and unvoted
+    voted_mems = [m for m in all_mems if m.id in voted_ids]
+    unvoted_mems = [m for m in all_mems if m.id not in voted_ids]
+    
+    # Rank only voted memories
+    if comparisons and voted_mems:
+        ranked_mems = rank_from_comparisons(voted_mems, comparisons)
+    else:
+        ranked_mems = sorted(voted_mems, key=lambda m: m.timestamp, reverse=True)
+    
+    # Sort unvoted by timestamp (newest first)
+    unvoted_mems.sort(key=lambda m: m.timestamp, reverse=True)
+    
+    # Count stats
+    current_count = sum(1 for m in all_mems if m.id in current_ids)
+    compacted_count = len(all_mems) - current_count
+    
+    top_bar = ["div.top-bar",
+        ["span.back-link", ["a", {"href": f"/{being_file}"}, "←"], " "],
+        ["span", f"{being_file}: {len(all_mems)} total ({current_count} current, {compacted_count} compacted) | {len(voted_mems)} ranked, {len(unvoted_mems)} unranked"]
+    ]
+    
+    def render_memory(m, rank=None):
+        is_current = m.id in current_ids
+        status_class = "memory-current" if is_current else "memory-compacted"
+        status_label = "current" if is_current else "compacted"
+        mtype = type(m).__name__.lower()
+        
+        content_preview = m.content[:100] + "..." if len(m.content) > 100 else m.content
+        
+        rank_span = ["span.memory-rank", f"#{rank} "] if rank else ["span.memory-rank", "— "]
+        
+        return ["details", {"class": f"memory-item {status_class}"},
+            ["summary",
+                rank_span,
+                ["span.memory-status", f"[{status_label}] "],
+                ["span.memory-type", f"{mtype} "],
+                ["span.memory-time", f"{format_timestamp(m.timestamp)} "],
+                ["span.memory-preview", content_preview]
+            ],
+            ["div.memory-full", m.content],
+            ["div.memory-id", f"id: {m.id[:8]}..."]
+        ]
+    
+    # Render ranked memories
+    memory_list = []
+    if ranked_mems:
+        memory_list.append(["div.section-header", f"ranked ({len(ranked_mems)})"])
+        for rank, m in enumerate(ranked_mems, 1):
+            memory_list.append(render_memory(m, rank))
+    
+    # Render unranked memories
+    if unvoted_mems:
+        memory_list.append(["div.section-header", f"unranked ({len(unvoted_mems)})"])
+        for m in unvoted_mems:
+            memory_list.append(render_memory(m, None))
+    
+    page = ["html",
+        html_head(f"{being_file} memories"),
+        ["body",
+            top_bar,
+            ["div.memories-list", memory_list]
+        ]
+    ]
+    
+    return render(page)
+
+
+@app.get("/{being_file}/memories", response_class=HTMLResponse)
+async def view_memories(being_file: str):
+    """View all memories for a being (current + compacted)"""
+    events_path = BEINGS_DIR / (being_file + ".jsonl")
+    if not events_path.exists():
+        return RedirectResponse(url="/", status_code=303)
+    return render_memories_page(being_file)
 
 
 if __name__ == "__main__":

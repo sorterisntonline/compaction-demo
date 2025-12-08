@@ -62,7 +62,8 @@ def apply_event(being, event):
             being.votes[(low, high)] = normalized
         case Compaction(released_ids=released_ids):
             for rid in released_ids:
-                del being.current[rid]
+                if rid in being.current:
+                    del being.current[rid]
         case Init(capacity=capacity, model=model):
             being.capacity = capacity
             being.model = model
@@ -157,8 +158,10 @@ def vote(being, a, b) -> int:
         # Stored score is relative to (low, high)
         # Return relative to caller's (a, b) order
         return votes[key] if a.id == low else -votes[key]
-    
-    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init, Vote, Compaction))]
+
+    # Repair mode: include ALL memories (even compacted) to give full context
+    MEMORY_TYPES = (Thought, Perception, Response)
+    mems = [m for m in being.all_memories.values() if isinstance(m, MEMORY_TYPES)]
     context = "\n\n".join(format_memory(m) for m in mems)
     
     user = f"""All memories currently under consideration:
@@ -311,9 +314,8 @@ def compact(being):
     # Rank ALL memories (transitive info flows through historical ones)
     ranked_all = rank_from_comparisons(all_mems, comparisons)
     
-    # Filter to only current memories, preserving rank order
-    # ranked_current = [m for m in ranked_all if m.id in current_ids]
-    ranked_current = ranked_all
+    # Filter to only current memories, preserving rank order from full ranking
+    ranked_current = [m for m in ranked_all if m.id in current_ids]
     
     kept, released = ranked_current[:budget], ranked_current[budget:]
     append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
