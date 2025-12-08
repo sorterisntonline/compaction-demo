@@ -186,7 +186,7 @@ def receive(being, message: str) -> str:
     response = strip_tags(raw)
     
     if "!declaration" in response:
-        declaration = response.split("!declaration", 1)[1].strip()
+        declaration = response.replace("!declaration", "").strip()
         append(being, Declaration(ts(), declaration, str(uuid.uuid4())))
         return declaration
     

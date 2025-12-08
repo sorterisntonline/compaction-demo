@@ -219,3 +219,34 @@ button:hover { background: #2ea043; }
   color: #8b949e;
 }
 
+/* Message form */
+.message-form textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #21262d;
+  background: #161b22;
+  color: #c9d1d9;
+  resize: vertical;
+  min-height: 100px;
+}
+.message-form textarea:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+.message-form button {
+  margin-top: 10px;
+  width: 100%;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+  body { padding: 1rem; }
+  .header { padding: 1.5rem 0; }
+  .header h1 { font-size: 1.8rem; }
+  .stats { flex-direction: column; gap: 0.5rem; }
+  .event-content { font-size: 0.85rem; }
+}
+

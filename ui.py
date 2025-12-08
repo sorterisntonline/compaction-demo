@@ -9,10 +9,10 @@ from typing import List
 from dataclasses import asdict
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from python_hiccup.html import render
+from hiccup import render
 
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
@@ -270,6 +270,14 @@ def render_being_page(being_file: str) -> str:
         ["div.events", event_list]
     ]
 
+    message_form = ["div.section",
+        ["h2", "Send Message"],
+        ["form", {"action": f"/{being_file}/send", "method": "post", "class": "message-form"},
+            ["textarea", {"name": "message", "placeholder": "Type a message...", "rows": "4"}],
+            ["button", {"type": "submit"}, "Send"]
+        ]
+    ]
+
     page = ["html",
         html_head(f"{being_file} - Consensual Memory"),
         ["body",
@@ -279,6 +287,7 @@ def render_being_page(being_file: str) -> str:
                 ["p", ["span.model-badge", model]]
             ],
             stats,
+            message_form,
             events_section
         ]
     ]
@@ -334,6 +343,20 @@ async def get_stats(being_file: str):
         "current_memories": len(memories),
         "compactions": sum(1 for e in events if isinstance(e, Compaction))
     }
+
+
+@app.post("/{being_file}/send", response_class=HTMLResponse)
+async def send_message_form(being_file: str, message: str = Form(...)):
+    """Send a message via form POST, redirect back to being page"""
+    from adam import load, receive
+    
+    events_path = BEINGS_DIR / (being_file + ".jsonl")
+    if not events_path.exists():
+        return RedirectResponse(url="/", status_code=303)
+    
+    being = load(events_path)
+    receive(being, message)
+    return RedirectResponse(url=f"/{being_file}", status_code=303)
 
 
 if __name__ == "__main__":
