@@ -260,22 +260,32 @@ def compact(being):
             existing_pairs.append((low_id, high_id))
             comparisons.append((all_id_to_mem[low_id], all_id_to_mem[high_id], score))
     
-    print(f"📊 {len(comparisons)} total votes ({len([p for p in existing_pairs if p[0] in current_ids and p[1] in current_ids])} on current memories)")
+    print(f"📊 {len(comparisons)} total votes across all memories")
     
-    # Find components among CURRENT memories only (for bridging)
-    current_pairs = [(a, b) for a, b in existing_pairs if a in current_ids and b in current_ids]
-    components = find_components(current_ids, current_pairs)
-    print(f"🔗 {len(components)} connected components in current memories")
+    # Find components in FULL graph (current + historical)
+    components = find_components(all_ids, existing_pairs)
+    print(f"🔗 {len(components)} connected components in full graph")
     
-    # Bridge disconnected components of current memories
+    # Bridge disconnected components (vote on current memories in each component)
     new_pairs = []
     if len(components) > 1:
-        main = components[0]
-        for comp in components[1:]:
-            a_id = random.choice(main)
-            b_id = random.choice(comp)
-            new_pairs.append((a_id, b_id))
-            main = main + comp
+        # Find current memories in each component
+        comp_current = []
+        for comp in components:
+            current_in_comp = [m for m in comp if m in current_ids]
+            if current_in_comp:
+                comp_current.append(current_in_comp)
+            else:
+                print(f"⚠️ Component with {len(comp)} memories has no current memories (all compacted)")
+        
+        # Bridge components that have current memories
+        if len(comp_current) > 1:
+            main = comp_current[0]
+            for comp in comp_current[1:]:
+                a_id = random.choice(main)
+                b_id = random.choice(comp)
+                new_pairs.append((a_id, b_id))
+                main = main + comp
     
     # Add a few random comparisons among current memories
     for _ in range(5):
@@ -296,7 +306,8 @@ def compact(being):
     ranked_all = rank_from_comparisons(all_mems, comparisons)
     
     # Filter to only current memories, preserving rank order
-    ranked_current = [m for m in ranked_all if m.id in current_ids]
+    # ranked_current = [m for m in ranked_all if m.id in current_ids]
+    ranked_current = ranked_all
     
     kept, released = ranked_current[:budget], ranked_current[budget:]
     append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
