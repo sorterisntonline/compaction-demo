@@ -270,18 +270,16 @@ def compact(being):
     # Bridge disconnected components of current memories
     new_pairs = []
     if len(components) > 1:
-        rng = random.Random(hash(tuple(sorted(current_ids))))
         main = components[0]
         for comp in components[1:]:
-            a_id = rng.choice(main)
-            b_id = rng.choice(comp)
+            a_id = random.choice(main)
+            b_id = random.choice(comp)
             new_pairs.append((a_id, b_id))
             main = main + comp
     
     # Add a few random comparisons among current memories
-    rng = random.Random(hash(tuple(sorted(current_ids))) + 1)
     for _ in range(5):
-        a, b = rng.sample(list(current_ids), 2)
+        a, b = random.sample(list(current_ids), 2)
         low, high = sorted([a, b])
         if (low, high) not in being.votes:
             new_pairs.append((a, b))
