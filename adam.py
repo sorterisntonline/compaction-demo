@@ -54,7 +54,11 @@ class Being:
 def apply_event(being, event):
     match event:
         case Vote(vote_a_id=a_id, vote_b_id=b_id, vote_score=score):
-            being.votes[frozenset({a_id, b_id})] = score
+            # Normalize to canonical (low, high) orientation
+            # Score is always stored relative to (low_id, high_id)
+            low, high = sorted([a_id, b_id])
+            normalized = score if a_id == low else -score
+            being.votes[(low, high)] = normalized
         case Compaction(released_ids=released_ids):
             for rid in released_ids:
                 del being.current[rid]
@@ -143,9 +147,12 @@ def vote(being, a, b) -> int:
         raise ValueError(f"No declaration for {being.path}. Being must write !declaration before compaction.")
     
     votes = being.votes
-    key = frozenset({a.id, b.id})
+    low, high = sorted([a.id, b.id])
+    key = (low, high)
     if key in votes:
-        return votes[key] if a.id < b.id else -votes[key]
+        # Stored score is relative to (low, high)
+        # Return relative to caller's (a, b) order
+        return votes[key] if a.id == low else -votes[key]
     
     mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init, Vote, Compaction))]
     context = "\n\n".join(format_memory(m) for m in mems)
@@ -234,12 +241,11 @@ def compact(being):
     
     existing_pairs = []
     comparisons = []
-    for key, score in being.votes.items():
-        ids_in_key = set(key)
-        if ids_in_key <= mem_ids:
-            a_id, b_id = sorted(key)
-            existing_pairs.append((a_id, b_id))
-            comparisons.append((id_to_mem[a_id], id_to_mem[b_id], score))
+    for (low_id, high_id), score in being.votes.items():
+        if {low_id, high_id} <= mem_ids:
+            existing_pairs.append((low_id, high_id))
+            # Score is already normalized to (low, high) orientation
+            comparisons.append((id_to_mem[low_id], id_to_mem[high_id], score))
     
     print(f"📊 {len(existing_pairs)} existing votes on current memories")
     
@@ -259,7 +265,8 @@ def compact(being):
     rng = random.Random(hash(tuple(sorted(mem_ids))) + 1)
     for _ in range(5):
         a, b = rng.sample(list(mem_ids), 2)
-        if frozenset({a, b}) not in being.votes:
+        low, high = sorted([a, b])
+        if (low, high) not in being.votes:
             new_pairs.append((a, b))
     
     if new_pairs:
