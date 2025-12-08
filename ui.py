@@ -114,34 +114,18 @@ def render_index() -> str:
     beings = find_beings()
     
     if beings:
-        being_cards = [
-            ["a", {"href": f"/{b['file']}"},
-                ["div.being-card",
-                    ["h2", f"🧠 {b['file']}"],
-                    ["div.being-meta",
-                        ["span", ["span.being-model", b['model']]],
-                        ["span", f"📊 {b['events']} events | capacity {b['capacity']}"]
-                    ]
-                ]
-            ]
+        being_links = [
+            ["a", {"href": f"/{b['file']}"}, 
+             f"{b['file']} ({b['model']}, {b['events']} events, {b['capacity']} capacity)"]
             for b in beings
         ]
-        content = ["div.beings", *being_cards]
+        content = ["div.beings", *being_links]
     else:
-        content = ["div.no-beings",
-            ["p", "No beings found."],
-            ["p", "Create one with: ", ["code", "python adam.py myname.jsonl"]]
-        ]
+        content = ["div.beings", "no beings"]
     
     page = ["html",
-        html_head("Consensual Memory"),
-        ["body",
-            ["div.header",
-                ["h1", "🧠 Consensual Memory"],
-                ["p", "Beings that choose their own memories"]
-            ],
-            content
-        ]
+        html_head("beings"),
+        ["body", content]
     ]
     
     return render(page)
@@ -150,33 +134,19 @@ def render_index() -> str:
 def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
     """Render a single event using hiccup with collapsible details"""
 
-    colors = {
-        "init": "#4a90e2",
-        "thought": "#7b68ee",
-        "perception": "#50c878",
-        "response": "#ff6b6b",
-        "declaration": "#ffd700",  # gold - instructions to subconscious
-        "compaction": "#ffa500",
-        "vote": "#e066ff"
-    }
     etype = event_type(event)
-    color = colors.get(etype, "#666")
     
     content_text = event_content(event) or "(empty)"
-    preview = content_text[:60] + "..." if len(content_text) > 60 else content_text
+    preview = content_text[:80] + "..." if len(content_text) > 80 else content_text
 
     summary = ["summary.event-summary",
-        ["span.event-num", f"#{idx}"],
-        ["span.event-type", {"style": f"color: {color}"}, etype.upper()],
-        ["span.event-time", format_timestamp(event.timestamp)],
+        ["span.event-num", f"{idx} "],
+        ["span.event-type", f"{etype} "],
+        ["span.event-time", f"{format_timestamp(event.timestamp)} "],
         ["span.event-preview", preview]
     ]
 
-    # Add timestamp to the content as well
-    content_div = ["div.event-content",
-        ["div.timestamp", format_timestamp(event.timestamp)],
-        ["div", content_text]
-    ]
+    content_div = ["div.event-content", content_text]
 
     parts = [content_div]
     
@@ -187,17 +157,17 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
         mem_a_content = memory_lookup.get(event.vote_a_id) or "(memory not found)"
         mem_b_content = memory_lookup.get(event.vote_b_id) or "(memory not found)"
         
-        a_label = "Memory A ✓ winner" if score > 0 else "Memory A"
-        b_label = "Memory B ✓ winner" if score < 0 else "Memory B"
+        a_label = "a (winner)" if score > 0 else "a"
+        b_label = "b (winner)" if score < 0 else "b"
         
         vote_details = ["div.vote-memories",
             ["div.vote-reasoning", reasoning] if reasoning else None,
             ["details.memory-detail",
-                ["summary", {"style": f"color: {'#50c878' if score > 0 else '#888'}"}, a_label],
+                ["summary", a_label],
                 ["div.memory-content", str(mem_a_content)]
             ],
             ["details.memory-detail",
-                ["summary", {"style": f"color: {'#ff6b6b' if score < 0 else '#888'}"}, b_label],
+                ["summary", b_label],
                 ["div.memory-content", str(mem_b_content)]
             ]
         ]
@@ -209,10 +179,7 @@ def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
         kept = len(event.kept_ids) if event.kept_ids else 0
         released = len(event.released_ids) if event.released_ids else 0
 
-        meta = ["div.event-meta",
-            ["span", f"Kept: {kept}"],
-            ["span", f"Released: {released}"]
-        ]
+        meta = ["div.event-meta", f"kept {kept}, released {released}"]
         parts.append(meta)
 
     return ["details.event", {"id": f"event-{idx}"}, summary, *parts]
@@ -235,24 +202,14 @@ def render_being_page(being_file: str) -> str:
                 memory_count -= len(event.released_ids)
 
     vote_count = sum(1 for e in events if isinstance(e, Vote))
+    compaction_count = sum(1 for e in events if isinstance(e, Compaction))
     
-    stats = ["div.stats",
-        ["div.stat",
-            ["div.stat-label", "Total Events"],
-            ["div.stat-value", str(len(events))]
-        ],
-        ["div.stat",
-            ["div.stat-label", "Current Memories"],
-            ["div.stat-value", str(memory_count)]
-        ],
-        ["div.stat",
-            ["div.stat-label", "Cached Votes"],
-            ["div.stat-value", str(vote_count)]
-        ],
-        ["div.stat",
-            ["div.stat-label", "Compactions"],
-            ["div.stat-value", str(sum(1 for e in events if isinstance(e, Compaction)))]
-        ]
+    # Single sentence stats
+    stats_sentence = f"{being_file} ({model}): {len(events)} events, {memory_count} memories, {vote_count} votes, {compaction_count} compactions"
+    
+    top_bar = ["div.top-bar",
+        ["span.back-link", ["a", {"href": "/"}, "←"], " "],
+        ["span", stats_sentence]
     ]
 
     # Build memory lookup for vote events (id -> content)
@@ -265,30 +222,17 @@ def render_being_page(being_file: str) -> str:
     event_list = [render_event(e, i, memory_lookup) for i, e in enumerate(events)]
     event_list.reverse()
 
-    events_section = ["div.section",
-        ["h2", "Event Log"],
-        ["div.events", event_list]
-    ]
-
-    message_form = ["div.section",
-        ["h2", "Send Message"],
-        ["form", {"action": f"/{being_file}/send", "method": "post", "class": "message-form"},
-            ["textarea", {"name": "message", "placeholder": "Type a message...", "rows": "4"}],
-            ["button", {"type": "submit"}, "Send"]
-        ]
+    message_form = ["form", {"action": f"/{being_file}/send", "method": "post"},
+        ["textarea", {"name": "message", "placeholder": "", "rows": "30"}],
+        ["button", {"type": "submit"}, "send"]
     ]
 
     page = ["html",
-        html_head(f"{being_file} - Consensual Memory"),
+        html_head(f"{being_file}"),
         ["body",
-            ["div.back-link", ["a", {"href": "/"}, "← All Beings"]],
-            ["div.header",
-                ["h1", f"🧠 {being_file}"],
-                ["p", ["span.model-badge", model]]
-            ],
-            stats,
+            top_bar,
             message_form,
-            events_section
+            ["div.events", event_list]
         ]
     ]
 
