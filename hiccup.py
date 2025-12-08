@@ -7,6 +7,13 @@ VOID_ELEMENTS = {
 }
 
 
+class RawContent:
+    """Wrapper for content that should not be HTML-escaped.
+    Use with caution - only for trusted content like inline scripts/styles."""
+    def __init__(self, content):
+        self.content = content
+
+
 def parse_tag(tag_str):
     """Parse 'div.class1.class2#id' into tag, id, classes."""
     parts = tag_str.split('#')
@@ -45,8 +52,11 @@ def render_attrs(attrs, id_val, classes):
     return ' ' + ' '.join(parts) if parts else ''
 
 
-def render(data):
+def render(data, parent_tag=None):
     """Render hiccup data structure to HTML string."""
+    if isinstance(data, RawContent):
+        return data.content
+    
     if isinstance(data, str):
         return escape(data)
 
@@ -85,7 +95,8 @@ def render(data):
         else:
             flattened.append(child)
 
-    children_html = ''.join(render(child) for child in flattened)
+    # Pass tag name to children for script/style tags
+    children_html = ''.join(render(child, tag) for child in flattened)
 
     # Render tag
     attrs_str = render_attrs(attrs, id_val, classes)

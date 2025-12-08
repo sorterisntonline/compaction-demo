@@ -12,7 +12,7 @@ from datetime import datetime
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from hiccup import render
+from hiccup import render, RawContent
 
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
@@ -109,14 +109,20 @@ def dark_mode_toggle() -> list:
     ]
 
 
+def load_script(filename: str) -> str:
+    """Load a script snippet from snippets directory."""
+    return (ROOT / "snippets" / filename).read_text()
+
+
 def html_head(title: str, include_form_script: bool = False) -> list:
-    """Common HTML head with external CSS and JS."""
+    """Common HTML head with external CSS and inline JS."""
     return ["head",
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
         ["link", {"rel": "stylesheet", "href": "/static/style.css"}],
-        ["script", {"src": "/static/script.js"}]
+        ["script", RawContent(load_script("dark-mode-init.js"))],
+        ["script", RawContent(load_script("interactions.js"))]
     ]
 
 
@@ -237,7 +243,7 @@ def render_being_page(being_file: str) -> str:
     event_list.reverse()
 
     message_form = ["form", {"action": f"/{being_file}/send", "method": "post"},
-        ["textarea", {"name": "message", "placeholder": "", "rows": "30"}],
+        ["textarea", {"name": "message", "placeholder": "", "rows": "8"}],
         ["button", {"type": "submit"}, "send"]
     ]
 
