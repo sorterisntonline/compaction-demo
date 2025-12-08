@@ -54,7 +54,7 @@ def find_beings() -> List[dict]:
             "capacity": capacity,
             "events": len(events)
         })
-    return sorted(beings, key=lambda b: b["file"])
+    return sorted(beings, key=lambda b: b["events"], reverse=True)
 
 
 def load_events_from_path(path: Path) -> List[Event]:
@@ -99,13 +99,24 @@ def format_timestamp(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def html_head(title: str) -> list:
-    """Common HTML head with external CSS."""
+def dark_mode_toggle() -> list:
+    """Dark mode toggle checkbox"""
+    return ["div.dark-mode-toggle",
+        ["label",
+            ["input", {"type": "checkbox", "id": "dark-mode-toggle"}],
+            "dark mode"
+        ]
+    ]
+
+
+def html_head(title: str, include_form_script: bool = False) -> list:
+    """Common HTML head with external CSS and JS."""
     return ["head",
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
-        ["link", {"rel": "stylesheet", "href": "/static/style.css"}]
+        ["link", {"rel": "stylesheet", "href": "/static/style.css"}],
+        ["script", {"src": "/static/script.js"}]
     ]
 
 
@@ -125,7 +136,10 @@ def render_index() -> str:
     
     page = ["html",
         html_head("beings"),
-        ["body", content]
+        ["body", 
+            content,
+            dark_mode_toggle()
+        ]
     ]
     
     return render(page)
@@ -232,7 +246,8 @@ def render_being_page(being_file: str) -> str:
         ["body",
             top_bar,
             message_form,
-            ["div.events", event_list]
+            ["div.events", event_list],
+            dark_mode_toggle()
         ]
     ]
 

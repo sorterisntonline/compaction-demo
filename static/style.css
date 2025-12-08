@@ -2,22 +2,38 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+:root {
+  --bg: #fff;
+  --text: #000;
+  --border: #000;
+  --muted: #666;
+  --hover-bg: #f0f0f0;
+}
+
+body.dark-mode {
+  --bg: #000;
+  --text: #fff;
+  --border: #fff;
+  --muted: #999;
+  --hover-bg: #222;
+}
+
 body {
   font-family: 'Garamond', 'Georgia', 'Times New Roman', serif;
-  background: #fff;
-  color: #000;
+  background: var(--bg);
+  color: var(--text);
   padding: 0;
   line-height: 1.4;
   font-size: 24px;
 }
 
-a { color: #000; text-decoration: underline; }
+a { color: var(--text); text-decoration: underline; }
 a:hover { text-decoration: none; }
 
 /* Top bar - thin, minimal */
 .top-bar {
   padding: 1px;
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid var(--border);
   font-size: 18px;
 }
 .back-link { display: inline; }
@@ -29,7 +45,11 @@ a:hover { text-decoration: none; }
 .beings a {
   display: block;
   padding: 1px;
-  border-bottom: 1px solid #000;
+  text-decoration: none;
+  color: var(--text);
+}
+.beings a:hover {
+  color: var(--muted);
 }
 
 /* Main textarea - the focus */
@@ -41,11 +61,11 @@ textarea {
   width: 100%;
   padding: 0;
   margin: 0;
-  background: #fff;
+  background: var(--bg);
   border: none;
-  border-top: 1px solid #000;
-  border-bottom: 1px solid #000;
-  color: #000;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
   font-family: 'Garamond', 'Georgia', 'Times New Roman', serif;
   font-size: 24px;
   resize: none;
@@ -58,25 +78,35 @@ textarea:focus {
 }
 
 button {
-  padding: 1px;
-  background: #000;
-  color: #fff;
-  border: 1px solid #000;
+  width: 100%;
+  padding: 30px;
+  background: var(--text);
+  color: var(--bg);
+  border: 6px solid;
+  border-color: var(--bg) var(--text) var(--text) var(--bg);
   font-family: 'Garamond', 'Georgia', 'Times New Roman', serif;
-  font-size: 20px;
+  font-size: 28px;
   cursor: pointer;
 }
 button:hover { 
-  background: #fff;
-  color: #000;
+  opacity: 0.9;
+}
+button:active {
+  border-color: var(--text) var(--bg) var(--bg) var(--text);
+}
+button.sending {
+  background: var(--muted);
+  color: var(--bg);
+  cursor: wait;
+  border-color: var(--text) var(--bg) var(--bg) var(--text);
 }
 
 /* Events - minimal */
 .events { 
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--border);
 }
 .event {
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid var(--border);
 }
 .event-summary {
   padding: 1px;
@@ -84,45 +114,45 @@ button:hover {
   font-size: 18px;
 }
 .event-summary:hover { 
-  background: #f0f0f0;
+  background: var(--hover-bg);
 }
-.event-num { color: #666; }
+.event-num { color: var(--muted); }
 .event-type { font-weight: normal; }
-.event-time { color: #666; }
+.event-time { color: var(--muted); }
 .event-preview {
-  color: #666;
+  color: var(--muted);
 }
 .event-content {
   padding: 1px;
   white-space: pre-wrap;
   font-size: 20px;
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--border);
 }
 .event-content .timestamp {
-  color: #666;
+  color: var(--muted);
   font-size: 16px;
 }
 .event-meta {
   font-size: 16px;
-  color: #666;
-  border-top: 1px solid #000;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
   padding: 1px;
 }
 
 /* Vote details */
 .vote-memories {
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--border);
   padding: 1px;
 }
 .vote-reasoning {
-  color: #666;
+  color: var(--muted);
   font-style: italic;
   font-size: 18px;
   padding: 1px;
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid var(--border);
 }
 .memory-detail {
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid var(--border);
 }
 .memory-detail summary {
   padding: 1px;
@@ -130,13 +160,25 @@ button:hover {
   font-size: 18px;
 }
 .memory-detail summary:hover { 
-  background: #f0f0f0;
+  background: var(--hover-bg);
 }
 .memory-content {
   padding: 1px;
   white-space: pre-wrap;
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--border);
   font-size: 18px;
-  color: #666;
+  color: var(--muted);
+}
+
+/* Dark mode toggle */
+.dark-mode-toggle {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  font-size: 14px;
+  padding: 5px;
+}
+.dark-mode-toggle input {
+  margin-right: 5px;
 }
 
