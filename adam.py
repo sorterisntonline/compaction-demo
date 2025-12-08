@@ -266,7 +266,7 @@ def compact(being):
     components = find_components(all_ids, existing_pairs)
     print(f"🔗 {len(components)} connected components in full graph")
     
-    # Bridge disconnected components (vote on current memories in each component)
+    # Bridge disconnected components
     new_pairs = []
     if len(components) > 1:
         # Find current memories in each component
@@ -282,13 +282,19 @@ def compact(being):
         if len(comp_current) > 1:
             main = comp_current[0]
             for comp in comp_current[1:]:
-                a_id = random.choice(main)
-                b_id = random.choice(comp)
-                new_pairs.append((a_id, b_id))
+                # Add multiple bridges per component for robustness
+                for _ in range(min(3, len(comp), len(main))):
+                    a_id = random.choice(main)
+                    b_id = random.choice(comp)
+                    new_pairs.append((a_id, b_id))
                 main = main + comp
     
-    # Add a few random comparisons among current memories
-    for _ in range(5):
+    # Add random comparisons to densify the graph
+    # More votes = better ranking, especially for new memories
+    num_random = max(20, len(current_ids) // 10)
+    for _ in range(num_random):
+        if len(current_ids) < 2:
+            break
         a, b = random.sample(list(current_ids), 2)
         low, high = sorted([a, b])
         if (low, high) not in being.votes:
