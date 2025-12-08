@@ -75,7 +75,17 @@ def render(data):
 
     # Render children
     children = data[children_start:]
-    children_html = ''.join(render(child) for child in children)
+
+    # Flatten children lists (support for passing lists of elements)
+    flattened = []
+    for child in children:
+        if isinstance(child, list) and len(child) > 0 and isinstance(child[0], list):
+            # This is a list of elements, flatten it
+            flattened.extend(child)
+        else:
+            flattened.append(child)
+
+    children_html = ''.join(render(child) for child in flattened)
 
     # Render tag
     attrs_str = render_attrs(attrs, id_val, classes)
