@@ -185,8 +185,8 @@ def receive(being, message: str) -> str:
     raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"))
     response = strip_tags(raw)
     
-    if response.startswith("!declaration"):
-        declaration = response.removeprefix("!declaration").strip()
+    if "!declaration" in response:
+        declaration = response.split("!declaration", 1)[1].strip()
         append(being, Declaration(ts(), declaration, str(uuid.uuid4())))
         return declaration
     
