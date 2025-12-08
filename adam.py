@@ -96,7 +96,8 @@ def format_memory(e) -> str:
 def build_prompt(being, tag: str = None) -> str:
     parts = [format_memory(e) for e in current_memories(being)]
     ctx = "\n\n".join(p for p in parts if p)
-    prompt = f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}]"
+    memory_count = len([m for m in current_memories(being) if not isinstance(m, (Vote, Compaction))])
+    prompt = f"{ctx}\n\n[{datetime.now():%Y-%m-%d %H:%M}] [{memory_count}/{being.capacity}]"
     if tag:
         prompt += f"\n\nSpeak only for yourself. One turn.\n\n<{tag}>"
     return prompt

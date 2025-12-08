@@ -3,14 +3,6 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --bg: #f5f5f0;
-  --text: #000;
-  --border: #000;
-  --muted: #666;
-  --hover-bg: #e8e8e0;
-}
-
-:root.dark-mode {
   --bg: #000;
   --text: #ccc;
   --border: #ccc;
@@ -170,15 +162,4 @@ button.sending {
   color: var(--muted);
 }
 
-/* Dark mode toggle */
-.dark-mode-toggle {
-  position: fixed;
-  bottom: 10px;
-  right: 10px;
-  font-size: 14px;
-  padding: 5px;
-}
-.dark-mode-toggle input {
-  margin-right: 5px;
-}
 

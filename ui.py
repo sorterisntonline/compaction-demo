@@ -110,14 +110,6 @@ def format_timestamp(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def dark_mode_toggle() -> list:
-    """Dark mode toggle checkbox"""
-    return ["div.dark-mode-toggle",
-        ["label",
-            ["input", {"type": "checkbox", "id": "dark-mode-toggle"}],
-            "dark mode"
-        ]
-    ]
 
 
 def load_script(filename: str) -> str:
@@ -132,7 +124,6 @@ def html_head(title: str, include_form_script: bool = False) -> list:
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
         ["link", {"rel": "stylesheet", "href": "/static/style.css"}],
-        ["script", RawContent(load_script("dark-mode-init.js"))],
         ["script", RawContent(load_script("interactions.js"))]
     ]
 
@@ -153,10 +144,7 @@ def render_index() -> str:
     
     page = ["html",
         html_head("beings"),
-        ["body", 
-            content,
-            dark_mode_toggle()
-        ]
+        ["body", content]
     ]
     
     return render(page)
@@ -255,7 +243,7 @@ def render_being_page(being_file: str) -> str:
 
     message_form = ["form", {"action": f"/{being_file}/send", "method": "post"},
         ["textarea", {"name": "message", "placeholder": "", "rows": "8"}],
-        ["div", {"style": "display: flex; gap: 10px;"},
+        ["div", {"style": "display: flex;"},
             ["button", {"type": "submit"}, "send"],
             ["button", {"type": "submit", "formaction": f"/{being_file}/next"}, "next"]
         ]
@@ -266,8 +254,7 @@ def render_being_page(being_file: str) -> str:
         ["body",
             top_bar,
             message_form,
-            ["div.events", event_list],
-            dark_mode_toggle()
+            ["div.events", event_list]
         ]
     ]
 
@@ -362,9 +349,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     
-    # Update module-level variable in this module's namespace
-    sys.modules[__name__].BEINGS_DIR = args.dir.resolve()
+    # Reassign module-level variable
+    globals()['BEINGS_DIR'] = args.dir.resolve()
     
     print(f"🌐 Starting Consensual Memory UI on http://localhost:{args.port}")
     print(f"📁 Serving beings from {BEINGS_DIR}")
-    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="debug")
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
