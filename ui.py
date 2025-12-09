@@ -117,14 +117,13 @@ def load_script(filename: str) -> str:
     return (ROOT / "snippets" / filename).read_text()
 
 
-def html_head(title: str, include_form_script: bool = False) -> list:
-    """Common HTML head with external CSS and inline JS."""
+def html_head(title: str) -> list:
+    """Common HTML head."""
     return ["head",
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
-        ["link", {"rel": "stylesheet", "href": "/static/style.css"}],
-        ["script", RawContent(load_script("interactions.js"))]
+        ["link", {"rel": "stylesheet", "href": "/static/style.css"}]
     ]
 
 
@@ -241,12 +240,12 @@ def render_being_page(being_file: str) -> str:
     event_list = [render_event(e, i, memory_lookup) for i, e in enumerate(events)]
     event_list.reverse()
 
-    message_form = ["form", {"action": f"/{being_file}/send", "method": "post"},
-        ["textarea", {"name": "message", "placeholder": "", "rows": "8"}],
-        ["div", {"style": "display: flex;"},
-            ["button", {"type": "submit"}, "send"],
-            ["button", {"type": "submit", "formaction": f"/{being_file}/next"}, "next"]
-        ]
+    message_form = [
+        ["form", {"action": f"/{being_file}/go", "method": "post"},
+            ["textarea", {"name": "message", "placeholder": "", "rows": "8"}],
+            ["button", {"type": "submit"}, "go"]
+        ],
+        ["script", RawContent(load_script("interactions.js"))]
     ]
 
     memories_link = ["div.memories-link",
@@ -316,31 +315,20 @@ async def get_stats(being_file: str):
     }
 
 
-@app.post("/{being_file}/send", response_class=HTMLResponse)
-async def send_message_form(being_file: str, message: str = Form(...)):
-    """Send a message via form POST, redirect back to being page"""
-    from adam import load, receive
+@app.post("/{being_file}/go", response_class=HTMLResponse)
+async def go(being_file: str, message: str = Form("")):
+    """Send message if text present, otherwise trigger thought"""
+    from adam import load, receive, think
     
     events_path = BEINGS_DIR / (being_file + ".jsonl")
     if not events_path.exists():
         return RedirectResponse(url="/", status_code=303)
     
     being = load(events_path)
-    receive(being, message)
-    return RedirectResponse(url=f"/{being_file}", status_code=303)
-
-
-@app.post("/{being_file}/next", response_class=HTMLResponse)
-async def next_thought(being_file: str):
-    """Trigger one thought cycle, redirect back to being page"""
-    from adam import load, think
-    
-    events_path = BEINGS_DIR / (being_file + ".jsonl")
-    if not events_path.exists():
-        return RedirectResponse(url="/", status_code=303)
-    
-    being = load(events_path)
-    think(being)
+    if message.strip():
+        receive(being, message)
+    else:
+        think(being)
     return RedirectResponse(url=f"/{being_file}", status_code=303)
 
 
