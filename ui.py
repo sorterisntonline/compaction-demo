@@ -17,7 +17,7 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from hiccup import render
+from hiccup import render, RawContent
 
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
@@ -66,7 +66,8 @@ def verify(code: str, nonce: str, sig: str) -> bool:
 
 
 def scrub(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+    """Return a valid Python string literal for any input."""
+    return repr(value)
 
 
 def snippet_hidden(code: str) -> list:
@@ -128,6 +129,10 @@ def ts_fmt(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def load_script(name: str) -> str:
+    return (ROOT / "snippets" / name).read_text()
+
+
 def head(title: str) -> list:
     return ["head",
         ["meta", {"charset": "utf-8"}],
@@ -186,7 +191,12 @@ def being_page(being_file: str) -> str:
     event_list = [render_event(e, i) for i, e in enumerate(events)]
     event_list.reverse()
     
-    return render(["html", head(being_file), ["body", top, form, ["div.events", event_list]]])
+    return render(["html", head(being_file), ["body", 
+        top, 
+        form, 
+        ["script", RawContent(load_script("interactions.js"))],
+        ["div.events", event_list]
+    ]])
 
 
 # === ROUTES ===
@@ -228,10 +238,8 @@ async def do(request: Request):
     # Substitute $vars
     form_data = {k: str(v) for k, v in form.items() if not k.startswith('__')}
     for key, value in form_data.items():
-        snippet = snippet.replace(f'${key}', f"'{scrub(value)}'")
+        snippet = snippet.replace(f'${key}', scrub(value))
     
-    if re.search(r'\$\w+', snippet):
-        return PlainTextResponse("Missing form fields", status_code=400)
     
     try:
         return eval(snippet)
