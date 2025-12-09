@@ -1,124 +1,134 @@
 #!/usr/bin/env python3
 """
-Consensual Memory UI: FastAPI server for visualizing beings' event logs and memories
+Consensual Memory UI - Signed Snippets
 """
 
 import json
+import hmac
+import hashlib
+import uuid
+import time
+import base64
+import re
+import traceback
 from pathlib import Path
-from typing import List
-from dataclasses import asdict
 from datetime import datetime
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from hiccup import render, RawContent
-import traceback
+from hiccup import render
 
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
-# Root of the project
 ROOT = Path(__file__).parent
-BEINGS_DIR = ROOT  # Set via CLI
+BEINGS_DIR = ROOT
 
-app = FastAPI(title="Consensual Memory Viewer")
+app = FastAPI()
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Show full stack trace for any unhandled exception"""
-    tb = traceback.format_exc()
-    return PlainTextResponse(
-        content=f"Internal Server Error\n\n{tb}",
-        status_code=500
-    )
+# === SIGNING ===
+
+SECRET = hashlib.sha256(f"snippets-{uuid.uuid4()}".encode()).digest()
+_nonces: dict[str, float] = {}
+NONCE_TTL = 3600
 
 
-def get_model(init: Init) -> str:
-    """Get model from Init event, error if missing."""
-    if init is None:
-        raise ValueError("No Init event found")
-    model = getattr(init, 'model', '')
-    if not model:
-        raise ValueError(f"Init event missing 'model' field")
-    return model
+def _clean_nonces():
+    now = time.time()
+    for n in [n for n, exp in _nonces.items() if exp < now]:
+        del _nonces[n]
 
 
-def find_beings() -> List[dict]:
-    """Find all .jsonl files in beings directory"""
+def generate_nonce() -> str:
+    _clean_nonces()
+    nonce = uuid.uuid4().hex
+    _nonces[nonce] = time.time() + NONCE_TTL
+    return nonce
+
+
+def consume_nonce(nonce: str) -> bool:
+    _clean_nonces()
+    if nonce in _nonces:
+        del _nonces[nonce]
+        return True
+    return False
+
+
+def sign(code: str, nonce: str) -> str:
+    msg = f"{code}|{nonce}".encode()
+    return base64.urlsafe_b64encode(hmac.new(SECRET, msg, hashlib.sha256).digest()).decode()
+
+
+def verify(code: str, nonce: str, sig: str) -> bool:
+    return hmac.compare_digest(sign(code, nonce), sig)
+
+
+def scrub(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+
+
+def snippet_hidden(code: str) -> list:
+    nonce = generate_nonce()
+    sig = sign(code, nonce)
+    return [
+        ["input", {"type": "hidden", "name": "__snippet__", "value": code}],
+        ["input", {"type": "hidden", "name": "__sig__", "value": sig}],
+        ["input", {"type": "hidden", "name": "__nonce__", "value": nonce}],
+    ]
+
+
+# === SNIPPETS ===
+
+def go(being_file: str, message: str = ''):
+    from adam import load, receive, think
+    being = load(BEINGS_DIR / f'{being_file}.jsonl')
+    if message.strip():
+        receive(being, message)
+    else:
+        think(being)
+    return RedirectResponse(f'/{being_file}', status_code=303)
+
+
+# === HELPERS ===
+
+def load_events(path: Path) -> list[Event]:
+    if not path.exists():
+        return []
+    events = []
+    with open(path) as f:
+        for line in f:
+            if line.strip():
+                events.append(from_dict(json.loads(line)))
+    return events
+
+
+def find_beings() -> list[dict]:
     beings = []
     for path in BEINGS_DIR.glob("*.jsonl"):
         if path.name.startswith('.'):
             continue
-        events = load_events_from_path(path)
+        events = load_events(path)
         if not events:
             continue
-        # Get model/capacity from Init event
         init = next((e for e in events if isinstance(e, Init)), None)
-        model = get_model(init)
-        capacity = getattr(init, 'capacity', 100) if init else 100
+        if not init or not init.model:
+            continue
         beings.append({
             "file": path.stem,
-            "path": path.name,
-            "model": model,
-            "capacity": capacity,
+            "model": init.model,
+            "capacity": init.capacity,
             "events": len(events)
         })
     return sorted(beings, key=lambda b: b["events"], reverse=True)
 
 
-def load_events_from_path(path: Path) -> List[Event]:
-    """Load all events from JSONL file"""
-    if not path.exists():
-        return []
-    events = []
-    with open(path, 'r') as f:
-        for line in f:
-            if line.strip():
-                event_dict = json.loads(line)
-                events.append(from_dict(event_dict))
-    return events
-
-
-def load_events(being_file: str) -> List[Event]:
-    """Load events by filename"""
-    return load_events_from_path(BEINGS_DIR / being_file)
-
-
-def event_type(event: Event) -> str:
-    """Get event type as string."""
-    return type(event).__name__.lower()
-
-
-def event_content(event: Event) -> str:
-    """Get event content if it has one."""
-    if hasattr(event, 'content'):
-        return event.content
-    return ""
-
-
-def event_id(event: Event) -> str:
-    """Get event id if it has one."""
-    if hasattr(event, 'id'):
-        return event.id
-    return ""
-
-
-def format_timestamp(ts: int) -> str:
-    """Format timestamp to readable string"""
+def ts_fmt(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
-
-
-def load_script(filename: str) -> str:
-    """Load a script snippet from snippets directory."""
-    return (ROOT / "snippets" / filename).read_text()
-
-
-def html_head(title: str) -> list:
-    """Common HTML head."""
+def head(title: str) -> list:
     return ["head",
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
@@ -127,337 +137,118 @@ def html_head(title: str) -> list:
     ]
 
 
-def render_index() -> str:
-    """Render the index page listing all beings"""
+# === PAGES ===
+
+def index_page() -> str:
     beings = find_beings()
-    
-    if beings:
-        being_links = [
-            ["a", {"href": f"/{b['file']}"},
-             f"{b['file']} ({b['model']}, {b['events']} events, {b['capacity']} capacity)"]
-            for b in beings
-        ]
-        content = ["div.beings", *being_links]
-    else:
-        content = ["div.beings", "no beings"]
-    
-    page = ["html",
-        html_head("beings"),
-        ["body", content]
-    ]
-    
-    return render(page)
+    links = [
+        ["a", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"]
+        for b in beings
+    ] if beings else ["No beings found"]
+    return render(["html", head("beings"), ["body", ["div.beings", *links]]])
 
 
-def render_event(event: Event, idx: int, memory_lookup: dict = None) -> list:
-    """Render a single event using hiccup with collapsible details"""
-
-    etype = event_type(event)
-    
-    content_text = event_content(event) or "(empty)"
-    preview = content_text[:80] + "..." if len(content_text) > 80 else content_text
-
-    summary = ["summary.event-summary",
-        ["span.event-num", f"{idx} "],
-        ["span.event-type", f"{etype} "],
-        ["span.event-time", f"{format_timestamp(event.timestamp)} "],
-        ["span.event-preview", preview]
-    ]
-
-    content_div = ["div.event-content", content_text]
-
-    parts = [content_div]
-    
-    # Vote events - show reasoning and the memories being compared
-    if isinstance(event, Vote) and memory_lookup:
-        score = event.vote_score or 0
-        reasoning = getattr(event, 'reasoning', '') or ''
-        mem_a_content = memory_lookup.get(event.vote_a_id) or "(memory not found)"
-        mem_b_content = memory_lookup.get(event.vote_b_id) or "(memory not found)"
-        
-        a_label = "a (winner)" if score > 0 else "a"
-        b_label = "b (winner)" if score < 0 else "b"
-        
-        vote_details = ["div.vote-memories",
-            ["div.vote-reasoning", reasoning] if reasoning else None,
-            ["details.memory-detail",
-                ["summary", a_label],
-                ["div.memory-content", str(mem_a_content)]
-            ],
-            ["details.memory-detail",
-                ["summary", b_label],
-                ["div.memory-content", str(mem_b_content)]
-            ]
-        ]
-        # Filter out None
-        vote_details = [x for x in vote_details if x is not None]
-        parts.append(vote_details)
-    
-    if isinstance(event, Compaction):
-        kept = len(event.kept_ids) if event.kept_ids else 0
-        released = len(event.released_ids) if event.released_ids else 0
-
-        meta = ["div.event-meta", f"kept {kept}, released {released}"]
-        parts.append(meta)
-
-    return ["details.event", {"id": f"event-{idx}"}, summary, *parts]
-
-
-def render_being_page(being_file: str) -> str:
-    """Render the page for a specific being"""
-    events = load_events(being_file + ".jsonl")
+def being_page(being_file: str) -> str:
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+    events = load_events(path)
     init = next((e for e in events if isinstance(e, Init)), None)
-    model = get_model(init)
-
-    # Rebuild current state for stats
-    memory_count = 0
-
-    for event in events:
-        if isinstance(event, (Init, Thought, Perception, Response, Declaration)):
-            memory_count += 1
-        elif isinstance(event, Compaction):
-            if event.released_ids:
-                memory_count -= len(event.released_ids)
-
+    model = init.model if init else "?"
+    
+    mem_count = sum(1 for e in events if isinstance(e, (Init, Thought, Perception, Response, Declaration)))
+    mem_count -= sum(len(e.released_ids) for e in events if isinstance(e, Compaction) and e.released_ids)
     vote_count = sum(1 for e in events if isinstance(e, Vote))
-    compaction_count = sum(1 for e in events if isinstance(e, Compaction))
     
-    # Single sentence stats
-    stats_sentence = f"{being_file} ({model}): {len(events)} events, {memory_count} memories, {vote_count} votes, {compaction_count} compactions"
+    top = ["div.top-bar",
+        ["a", {"href": "/"}, "←"], " ",
+        f"{being_file} ({model}): {len(events)} events, {mem_count} memories, {vote_count} votes"
+    ]
     
-    top_bar = ["div.top-bar",
-        ["span.back-link", ["a", {"href": "/"}, "←"], " "],
-        ["span", stats_sentence]
+    form = ["form", {"action": "/do", "method": "post"},
+        *snippet_hidden(f"go('{being_file}', $message)"),
+        ["textarea", {"name": "message", "rows": "8"}],
+        ["button", "go"]
     ]
-
-    # Build memory lookup for vote events (id -> content)
-    memory_lookup = {}
-    for e in events:
-        if isinstance(e, (Init, Thought, Perception, Response, Declaration)):
-            memory_lookup[e.id] = e.content
-
-    # Reverse event list - newest first
-    event_list = [render_event(e, i, memory_lookup) for i, e in enumerate(events)]
-    event_list.reverse()
-
-    message_form = [
-        ["form", {"action": f"/{being_file}/go", "method": "post"},
-            ["textarea", {"name": "message", "placeholder": "", "rows": "8"}],
-            ["button", {"type": "submit"}, "go"]
-        ],
-        ["script", RawContent(load_script("interactions.js"))]
-    ]
-
-    memories_link = ["div.memories-link",
-        ["a", {"href": f"/{being_file}/memories"}, "view all memories →"]
-    ]
-
-    page = ["html",
-        html_head(f"{being_file}"),
-        ["body",
-            top_bar,
-            message_form,
-            ["div.events", event_list],
-            memories_link
+    
+    def render_event(e, i):
+        etype = type(e).__name__.lower()
+        content = getattr(e, 'content', '') or ''
+        preview = content[:80] + "..." if len(content) > 80 else content
+        return ["details.event",
+            ["summary",
+                ["span.event-num", f"{i} "],
+                ["span.event-type", f"{etype} "],
+                ["span.event-time", f"{ts_fmt(e.timestamp)} "],
+                ["span.event-preview", preview]
+            ],
+            ["div.event-content", content] if content else None
         ]
-    ]
+    
+    event_list = [render_event(e, i) for i, e in enumerate(events)]
+    event_list.reverse()
+    
+    return render(["html", head(being_file), ["body", top, form, ["div.events", event_list]]])
 
-    return render(page)
 
+# === ROUTES ===
 
-# Routes
+@app.exception_handler(Exception)
+async def error_handler(request: Request, exc: Exception):
+    return PlainTextResponse(f"Error\n\n{traceback.format_exc()}", status_code=500)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Index page - list all beings"""
-    return render_index()
+    return index_page()
 
 
 @app.get("/{being_file}", response_class=HTMLResponse)
 async def view_being(being_file: str):
-    """View a specific being"""
-    events_path = BEINGS_DIR / (being_file + ".jsonl")
-    if not events_path.exists():
-        return RedirectResponse(url="/", status_code=303)
-    return render_being_page(being_file)
+    if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
+        return RedirectResponse("/", status_code=303)
+    return being_page(being_file)
 
 
-@app.get("/{being_file}/api/events")
-async def get_events(being_file: str):
-    """Get events as JSON"""
-    events = load_events(being_file + ".jsonl")
-    return [asdict(e) for e in events]
-
-
-@app.get("/{being_file}/api/stats")
-async def get_stats(being_file: str):
-    """Get current stats"""
-    events = load_events(being_file + ".jsonl")
-    init = next((e for e in events if isinstance(e, Init)), None)
-    model = get_model(init)
-
-    memories = {}
-
-    for event in events:
-        if isinstance(event, (Init, Thought, Perception, Response, Declaration)):
-            memories[event.id] = event.content
-        elif isinstance(event, Compaction):
-            if event.released_ids:
-                for mem_id in event.released_ids:
-                    memories.pop(mem_id, None)
-
-    return {
-        "file": being_file,
-        "model": model,
-        "total_events": len(events),
-        "current_memories": len(memories),
-        "compactions": sum(1 for e in events if isinstance(e, Compaction))
-    }
-
-
-@app.post("/{being_file}/go", response_class=HTMLResponse)
-async def go(being_file: str, message: str = Form("")):
-    """Send message if text present, otherwise trigger thought"""
-    from adam import load, receive, think
+@app.post("/do")
+async def do(request: Request):
+    form = await request.form()
     
-    events_path = BEINGS_DIR / (being_file + ".jsonl")
-    if not events_path.exists():
-        return RedirectResponse(url="/", status_code=303)
+    snippet = form.get('__snippet__', '')
+    sig = form.get('__sig__', '')
+    nonce = form.get('__nonce__', '')
     
-    being = load(events_path)
-    if message.strip():
-        receive(being, message)
-    else:
-        think(being)
-    return RedirectResponse(url=f"/{being_file}", status_code=303)
-
-
-def render_memories_page(being_file: str) -> str:
-    """Render a page showing all memories (current + compacted) with different colors"""
-    from adam import load
-    from consensual_memory.rank import rank_from_comparisons
+    if not all([snippet, sig, nonce]):
+        return PlainTextResponse("Missing fields", status_code=400)
     
-    events_path = BEINGS_DIR / (being_file + ".jsonl")
-    being = load(events_path)
+    if not verify(snippet, nonce, sig):
+        return PlainTextResponse("Invalid signature", status_code=403)
     
-    # Get current memory IDs
-    current_ids = set(being.current.keys())
+    if not consume_nonce(nonce):
+        return PlainTextResponse("Invalid nonce", status_code=403)
     
-    # Get all memories (Thought, Perception, Response only)
-    all_mems = []
-    for e in being.events:
-        if isinstance(e, (Thought, Perception, Response)):
-            all_mems.append(e)
+    # Substitute $vars
+    form_data = {k: str(v) for k, v in form.items() if not k.startswith('__')}
+    for key, value in form_data.items():
+        snippet = snippet.replace(f'${key}', f"'{scrub(value)}'")
     
-    # Build comparisons from all votes
-    id_to_mem = {m.id: m for m in all_mems}
-    all_ids = set(id_to_mem.keys())
-    edges = []
-    comparisons = []
-    for (low_id, high_id), score in being.votes.items():
-        if low_id in id_to_mem and high_id in id_to_mem:
-            edges.append((low_id, high_id))
-            comparisons.append((id_to_mem[low_id], id_to_mem[high_id], score))
+    if re.search(r'\$\w+', snippet):
+        return PlainTextResponse("Missing form fields", status_code=400)
     
-    # Find connected components - only rank the main one
-    from adam import find_components
-    components = find_components(all_ids, edges)
-    components.sort(key=len, reverse=True)
-    main_component = set(components[0]) if components else set()
-    
-    # Only include memories in the main connected component
-    connected_mems = [m for m in all_mems if m.id in main_component]
-    connected_comparisons = [(a, b, s) for a, b, s in comparisons 
-                             if a.id in main_component and b.id in main_component]
-    orphan_mems = [m for m in all_mems if m.id not in main_component]
-    
-    # Rank connected memories
-    if connected_comparisons:
-        ranked_mems = rank_from_comparisons(connected_mems, connected_comparisons)
-    else:
-        ranked_mems = sorted(connected_mems, key=lambda m: m.timestamp, reverse=True)
-    
-    # Sort orphans by timestamp
-    orphan_mems.sort(key=lambda m: m.timestamp, reverse=True)
-    
-    # Count stats
-    current_count = sum(1 for m in all_mems if m.id in current_ids)
-    compacted_count = len(all_mems) - current_count
-    budget = being.capacity // 2
-    
-    top_bar = ["div.top-bar",
-        ["span.back-link", ["a", {"href": f"/{being_file}"}, "←"], " "],
-        ["span", f"{being_file}: {len(all_mems)} total ({current_count} current, {compacted_count} compacted) | {len(connected_mems)} connected, {len(orphan_mems)} orphaned | budget: {budget}"]
-    ]
-    
-    def render_memory(m, rank=None):
-        is_current = m.id in current_ids
-        status_class = "memory-current" if is_current else "memory-compacted"
-        status_label = "current" if is_current else "compacted"
-        mtype = type(m).__name__.lower()
-        
-        content_preview = m.content[:100] + "..." if len(m.content) > 100 else m.content
-        
-        rank_span = ["span.memory-rank", f"#{rank} "] if rank else ["span.memory-rank", "— "]
-        
-        return ["details", {"class": f"memory-item {status_class}"},
-            ["summary",
-                rank_span,
-                ["span.memory-status", f"[{status_label}] "],
-                ["span.memory-type", f"{mtype} "],
-                ["span.memory-time", f"{format_timestamp(m.timestamp)} "],
-                ["span.memory-preview", content_preview]
-            ],
-            ["div.memory-full", m.content],
-            ["div.memory-id", f"id: {m.id[:8]}..."]
-        ]
-    
-    # Render connected memories in rank order
-    memory_list = []
-    if ranked_mems:
-        memory_list.append(["div.section-header", f"ranked ({len(ranked_mems)} in main component)"])
-        for rank, m in enumerate(ranked_mems, 1):
-            memory_list.append(render_memory(m, rank))
-    
-    # Render orphaned memories (not connected to main vote graph)
-    if orphan_mems:
-        memory_list.append(["div.section-header", f"orphaned ({len(orphan_mems)} disconnected from vote graph)"])
-        for m in orphan_mems:
-            memory_list.append(render_memory(m, None))
-    
-    page = ["html",
-        html_head(f"{being_file} memories"),
-        ["body",
-            top_bar,
-            ["div.memories-list", memory_list]
-        ]
-    ]
-    
-    return render(page)
-
-
-@app.get("/{being_file}/memories", response_class=HTMLResponse)
-async def view_memories(being_file: str):
-    """View all memories for a being (current + compacted)"""
-    events_path = BEINGS_DIR / (being_file + ".jsonl")
-    if not events_path.exists():
-        return RedirectResponse(url="/", status_code=303)
-    return render_memories_page(being_file)
+    try:
+        return eval(snippet)
+    except Exception as e:
+        return PlainTextResponse(str(e), status_code=500)
 
 
 if __name__ == "__main__":
     import argparse
-    import sys
     import uvicorn
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("dir", type=Path, nargs="?", default=ROOT, help="Directory containing .jsonl files")
+    parser.add_argument("dir", type=Path, nargs="?", default=ROOT)
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
     
-    # Reassign module-level variable
     globals()['BEINGS_DIR'] = args.dir.resolve()
     
-    print(f"🌐 Starting Consensual Memory UI on http://localhost:{args.port}")
-    print(f"📁 Serving beings from {BEINGS_DIR}")
+    print(f"http://localhost:{args.port}")
     uvicorn.run(app, host="0.0.0.0", port=args.port)
