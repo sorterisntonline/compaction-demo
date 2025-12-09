@@ -159,9 +159,9 @@ def vote(being, a, b) -> int:
         # Return relative to caller's (a, b) order
         return votes[key] if a.id == low else -votes[key]
 
-    # Repair mode: include ALL memories (even compacted) to give full context
-    MEMORY_TYPES = (Thought, Perception, Response)
-    mems = [m for m in being.all_memories.values() if isinstance(m, MEMORY_TYPES)]
+    # Normal mode: only CURRENT memories in voting context
+    # (The graph/ranking uses all votes, but the LLM only sees current)
+    mems = [m for m in current_memories(being) if not isinstance(m, (Declaration, Init, Vote, Compaction))]
     context = "\n\n".join(format_memory(m) for m in mems)
     
     user = f"""All memories currently under consideration:

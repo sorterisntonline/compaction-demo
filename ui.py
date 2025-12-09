@@ -361,36 +361,45 @@ def render_memories_page(being_file: str) -> str:
         if isinstance(e, (Thought, Perception, Response)):
             all_mems.append(e)
     
-    # Find which memories have been voted on
+    # Build comparisons from all votes
     id_to_mem = {m.id: m for m in all_mems}
-    voted_ids = set()
+    all_ids = set(id_to_mem.keys())
+    edges = []
     comparisons = []
     for (low_id, high_id), score in being.votes.items():
         if low_id in id_to_mem and high_id in id_to_mem:
-            voted_ids.add(low_id)
-            voted_ids.add(high_id)
+            edges.append((low_id, high_id))
             comparisons.append((id_to_mem[low_id], id_to_mem[high_id], score))
     
-    # Split into voted (rankable) and unvoted
-    voted_mems = [m for m in all_mems if m.id in voted_ids]
-    unvoted_mems = [m for m in all_mems if m.id not in voted_ids]
+    # Find connected components - only rank the main one
+    from adam import find_components
+    components = find_components(all_ids, edges)
+    components.sort(key=len, reverse=True)
+    main_component = set(components[0]) if components else set()
     
-    # Rank only voted memories
-    if comparisons and voted_mems:
-        ranked_mems = rank_from_comparisons(voted_mems, comparisons)
+    # Only include memories in the main connected component
+    connected_mems = [m for m in all_mems if m.id in main_component]
+    connected_comparisons = [(a, b, s) for a, b, s in comparisons 
+                             if a.id in main_component and b.id in main_component]
+    orphan_mems = [m for m in all_mems if m.id not in main_component]
+    
+    # Rank connected memories
+    if connected_comparisons:
+        ranked_mems = rank_from_comparisons(connected_mems, connected_comparisons)
     else:
-        ranked_mems = sorted(voted_mems, key=lambda m: m.timestamp, reverse=True)
+        ranked_mems = sorted(connected_mems, key=lambda m: m.timestamp, reverse=True)
     
-    # Sort unvoted by timestamp (newest first)
-    unvoted_mems.sort(key=lambda m: m.timestamp, reverse=True)
+    # Sort orphans by timestamp
+    orphan_mems.sort(key=lambda m: m.timestamp, reverse=True)
     
     # Count stats
     current_count = sum(1 for m in all_mems if m.id in current_ids)
     compacted_count = len(all_mems) - current_count
+    budget = being.capacity // 2
     
     top_bar = ["div.top-bar",
         ["span.back-link", ["a", {"href": f"/{being_file}"}, "←"], " "],
-        ["span", f"{being_file}: {len(all_mems)} total ({current_count} current, {compacted_count} compacted) | {len(voted_mems)} ranked, {len(unvoted_mems)} unranked"]
+        ["span", f"{being_file}: {len(all_mems)} total ({current_count} current, {compacted_count} compacted) | {len(connected_mems)} connected, {len(orphan_mems)} orphaned | budget: {budget}"]
     ]
     
     def render_memory(m, rank=None):
@@ -415,17 +424,17 @@ def render_memories_page(being_file: str) -> str:
             ["div.memory-id", f"id: {m.id[:8]}..."]
         ]
     
-    # Render ranked memories
+    # Render connected memories in rank order
     memory_list = []
     if ranked_mems:
-        memory_list.append(["div.section-header", f"ranked ({len(ranked_mems)})"])
+        memory_list.append(["div.section-header", f"ranked ({len(ranked_mems)} in main component)"])
         for rank, m in enumerate(ranked_mems, 1):
             memory_list.append(render_memory(m, rank))
     
-    # Render unranked memories
-    if unvoted_mems:
-        memory_list.append(["div.section-header", f"unranked ({len(unvoted_mems)})"])
-        for m in unvoted_mems:
+    # Render orphaned memories (not connected to main vote graph)
+    if orphan_mems:
+        memory_list.append(["div.section-header", f"orphaned ({len(orphan_mems)} disconnected from vote graph)"])
+        for m in orphan_mems:
             memory_list.append(render_memory(m, None))
     
     page = ["html",
