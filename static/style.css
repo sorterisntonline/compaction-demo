@@ -241,3 +241,45 @@ button.sending {
   opacity: 0.7;
 }
 
+/* Signed snippets UI */
+.forms-row {
+  display: flex;
+  flex-direction: column;
+}
+.forms-row > form {
+  flex: 1;
+}
+.action-buttons {
+  display: flex;
+}
+.action-buttons form {
+  flex: 1;
+}
+.action-buttons button {
+  padding: 20px;
+  font-size: 24px;
+}
+
+/* Snippet display - view source */
+.snippet-info {
+  border-bottom: 1px solid var(--border);
+}
+.snippet-info summary {
+  padding: 8px 1px;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--muted);
+}
+.snippet-info summary:hover {
+  background: var(--hover-bg);
+}
+.snippet-code {
+  padding: 10px;
+  background: #0a0a0a;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  white-space: pre-wrap;
+  color: #8f8;
+  border-top: 1px solid var(--border);
+}
+
