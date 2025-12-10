@@ -2,6 +2,11 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 :root {
   --bg: #000;
   --text: #ccc;
@@ -117,6 +122,8 @@ button.sending {
 .event-content {
   padding: 1px;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
   font-size: 20px;
   border-top: 1px solid var(--border);
 }
@@ -157,6 +164,8 @@ button.sending {
 .memory-content {
   padding: 1px;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
   border-top: 1px solid var(--border);
   font-size: 18px;
   color: var(--muted);
@@ -217,6 +226,8 @@ button.sending {
 .memory-full {
   padding: 1px;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
   font-size: 20px;
   border-top: 1px solid var(--border);
 }
@@ -279,6 +290,8 @@ button.sending {
   font-family: 'Courier New', monospace;
   font-size: 14px;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
   color: #8f8;
   border-top: 1px solid var(--border);
 }
