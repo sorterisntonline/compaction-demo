@@ -22,7 +22,7 @@ def test_vote_uses_cache_when_present(monkeypatch):
     b = Thought(2, "B", "b")
 
     # Cache a positive score for {a,b}
-    being.votes[frozenset({"a", "b"})] = 15
+    being.votes[("a", "b")] = 15
 
     score_ab = vote(being, a, b)
     score_ba = vote(being, b, a)
