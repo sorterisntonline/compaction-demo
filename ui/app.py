@@ -19,17 +19,19 @@ from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from hiccup import render, RawContent
 
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 ROOT = Path(__file__).parent.parent
 BEINGS_DIR = ROOT
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 # CSS cache busting
 def get_css_hash() -> str:
-    css_path = ROOT / "static" / "style.css"
+    css_path = Path(__file__).parent / "static" / "style.css"
     if css_path.exists():
         content = css_path.read_bytes()
         return hashlib.sha256(content).hexdigest()[:8]
