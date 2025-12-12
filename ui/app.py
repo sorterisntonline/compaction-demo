@@ -177,7 +177,7 @@ def ts_fmt(ts: int) -> str:
 
 
 def load_script(name: str) -> str:
-    return (ROOT / "snippets" / name).read_text()
+    return (Path(__file__).parent / "js" / name).read_text()
 
 
 def head(title: str) -> list:
