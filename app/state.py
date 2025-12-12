@@ -6,13 +6,13 @@ import time
 from pathlib import Path
 from typing import Dict, Any
 
-from .events import AppEvent, AppInit, ColorConfigChanged, from_dict, to_dict
+from .events import AppEvent, AppInit, ConfigChanged, from_dict, to_dict
 
 
 class AppState:
     def __init__(self, log_path: Path):
         self.log_path = log_path
-        self.being_colors: Dict[str, Dict[str, str]] = {}  # being_id -> {primary, secondary}
+        self.config: Dict[str, Dict[str, str]] = {}  # being_id -> {key: value}
         self.version = "0.1.0"
         
         self._replay_events()
@@ -37,11 +37,10 @@ class AppState:
             case AppInit(version=version):
                 self.version = version
             
-            case ColorConfigChanged(being_id=being_id, primary_color=primary, secondary_color=secondary):
-                self.being_colors[being_id] = {
-                    "primary": primary,
-                    "secondary": secondary
-                }
+            case ConfigChanged(being_id=being_id, key=key, value=value):
+                if being_id not in self.config:
+                    self.config[being_id] = {}
+                self.config[being_id][key] = value
     
     def _append_event(self, event: AppEvent):
         """Append event to log and apply to materialized views"""
@@ -49,20 +48,24 @@ class AppState:
             f.write(json.dumps(to_dict(event)) + '\n')
         self._apply_event(event)
     
+    def get_config(self, being_id: str, key: str, default: str = "") -> str:
+        """Get config value for a being"""
+        return self.config.get(being_id, {}).get(key, default)
+    
     def get_colors(self, being_id: str) -> Dict[str, str]:
         """Get colors for a being, with defaults"""
-        return self.being_colors.get(being_id, {
-            "primary": "#ccc",
-            "secondary": "#888"
-        })
+        return {
+            "primary": self.get_config(being_id, "primary_color", "#ccc"),
+            "secondary": self.get_config(being_id, "secondary_color", "#888")
+        }
     
-    def update_colors(self, being_id: str, primary_color: str, secondary_color: str):
-        """Update colors for a being"""
-        event = ColorConfigChanged(
+    def set_config(self, being_id: str, key: str, value: str):
+        """Set config value for a being"""
+        event = ConfigChanged(
             timestamp=int(time.time() * 1000),
             being_id=being_id,
-            primary_color=primary_color,
-            secondary_color=secondary_color
+            key=key,
+            value=value
         )
         self._append_event(event)
 

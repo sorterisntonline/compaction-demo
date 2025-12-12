@@ -16,14 +16,14 @@ class AppInit:
 
 
 @app_event
-class ColorConfigChanged:
+class ConfigChanged:
     timestamp: int
     being_id: str
-    primary_color: str
-    secondary_color: str
+    key: str
+    value: str  # JSON string for complex values
 
 
-AppEvent = AppInit | ColorConfigChanged
+AppEvent = AppInit | ConfigChanged
 
 
 def to_dict(e: AppEvent) -> dict:

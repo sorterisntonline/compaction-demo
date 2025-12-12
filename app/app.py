@@ -103,12 +103,11 @@ def go(being_file: str, message: str = ''):
 
 
 def update_config(being_file: str, **kwargs):
-    
     app_state = get_app_state()
-    primary = kwargs.get('primary_color', '#ccc')
-    secondary = kwargs.get('secondary_color', '#888')
     
-    app_state.update_colors(being_file, primary, secondary)
+    for key, value in kwargs.items():
+        if value:  # Only set non-empty values
+            app_state.set_config(being_file, key, value)
     
     return RedirectResponse(f'/{being_file}/config', status_code=303)
 
