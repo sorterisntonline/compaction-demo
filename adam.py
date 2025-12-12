@@ -20,7 +20,7 @@ import httpx
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from consensual_memory.rank import rank_from_comparisons
+from rank import rank_from_comparisons
 from schema import Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict, to_dict
 
 ROOT = Path(__file__).parent

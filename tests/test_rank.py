@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from consensual_memory.rank import rank_centrality, rank_from_comparisons
+from rank import rank_centrality, rank_from_comparisons
 
 
 class Dummy:
