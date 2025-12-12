@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 
-from event_store import event, append, replay, EventStore
+from event_store import event, EventStore
 from event_store.core import to_dict, from_dict
 
 @event
@@ -57,17 +57,22 @@ def test_append_and_replay():
     with tempfile.TemporaryDirectory() as tmpdir:
         log_path = Path(tmpdir) / "test.jsonl"
         
+        # Create store to test append/replay methods
+        initial_state = CountState()
+        store = EventStore(log_path, count_reducer, initial_state)
+        
         # Append some events
         event1 = TestEvent(timestamp=100, message="first")
         event2 = AnotherEvent(timestamp=200, value="second")
         event3 = TestEvent(timestamp=300, message="third", count=10)
         
-        append(log_path, event1)
-        append(log_path, event2)
-        append(log_path, event3)
+        store.append_event(event1)
+        store.append_event(event2)
+        store.append_event(event3)
         
-        # Replay events
-        events = list(replay(log_path))
+        # Test replay by creating new store
+        store2 = EventStore(log_path, count_reducer, CountState())
+        events = list(store2._replay())
         
         assert len(events) == 3
         assert events[0] == event1
@@ -78,7 +83,9 @@ def test_empty_replay():
     """Test replaying from non-existent file"""
     with tempfile.TemporaryDirectory() as tmpdir:
         log_path = Path(tmpdir) / "nonexistent.jsonl"
-        events = list(replay(log_path))
+        initial_state = CountState()
+        store = EventStore(log_path, count_reducer, initial_state)
+        events = list(store._replay())
         assert events == []
 
 @dataclass
@@ -115,9 +122,8 @@ def test_event_store():
         store = EventStore(log_path, count_reducer, initial_state)
         
         # Initial state
-        state = store.get_state()
-        assert state.count == 0
-        assert state.messages == []
+        assert store.state.count == 0
+        assert store.state.messages == []
         
         # Add some events
         store.append_event(TestEvent(timestamp=100, message="hello", count=5))
@@ -125,9 +131,8 @@ def test_event_store():
         store.append_event(TestEvent(timestamp=300, message="goodbye", count=3))
         
         # Check final state
-        state = store.get_state()
-        assert state.count == 8
-        assert state.messages == ["hello", "another: world", "goodbye"]
+        assert store.state.count == 8
+        assert store.state.messages == ["hello", "another: world", "goodbye"]
 
 def test_event_store_persistence():
     """Test that EventStore correctly rebuilds state from persisted events"""

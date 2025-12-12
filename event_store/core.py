@@ -2,10 +2,9 @@
 Core event sourcing functionality
 """
 import json
-import time
 from dataclasses import dataclass, fields, asdict
 from pathlib import Path
-from typing import TypeVar, Generic, Callable, Iterator, Any, Dict, Optional
+from typing import TypeVar, Generic, Callable, Iterator, Any, Dict
 
 from .types import Event, State, Reducer
 
@@ -32,42 +31,35 @@ def from_dict(d: Dict[str, Any]):
     kwargs = {k: v for k, v in d.items() if k in valid_fields}
     return cls(**kwargs)
 
-def append(log_path: Path, event) -> None:
-    """Append event to JSONL file"""
-    with open(log_path, 'a') as f:
-        f.write(json.dumps(to_dict(event)) + '\n')
-
-def replay(log_path: Path) -> Iterator:
-    """Replay events from JSONL file"""
-    if not log_path.exists():
-        return
-    
-    with open(log_path) as f:
-        for line in f:
-            if line.strip():
-                event_dict = json.loads(line)
-                yield from_dict(event_dict)
-
+@dataclass
 class EventStore(Generic[State]):
     """Generic event store with state management"""
+    log_path: Path
+    reducer: Reducer[State, Any] 
+    state: State
     
-    def __init__(self, log_path: Path, reducer: Reducer[State, Any], initial_state: State):
-        self.log_path = log_path
-        self.reducer = reducer
-        self.state = initial_state
-        
+    def __post_init__(self):
+        """Replay all events to rebuild state after initialization"""
         self._replay_all()
+    
+    def _replay(self) -> Iterator:
+        """Replay events from JSONL file"""
+        if not self.log_path.exists():
+            return
+        
+        with open(self.log_path) as f:
+            for line in f:
+                if line.strip():
+                    event_dict = json.loads(line)
+                    yield from_dict(event_dict)
     
     def _replay_all(self):
         """Replay all events to rebuild state"""
-        for event in replay(self.log_path):
+        for event in self._replay():
             self.state = self.reducer(self.state, event)
     
-    def append_event(self, event) -> None:
-        """Append event and update state"""
-        append(self.log_path, event)
+    def append(self, event) -> None:
+        """Append event to file and update state"""
+        with open(self.log_path, 'a') as f:
+            f.write(json.dumps(to_dict(event)) + '\n')
         self.state = self.reducer(self.state, event)
-    
-    def get_state(self) -> State:
-        """Get current state"""
-        return self.state

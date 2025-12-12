@@ -43,11 +43,11 @@ class AppStateManager:
         
         # Initialize with AppInit if empty
         if not log_path.exists():
-            self.store.append_event(AppInit(timestamp=int(time.time() * 1000)))
+            self.store.append(AppInit(timestamp=int(time.time() * 1000)))
     
     def get_config(self, being_id: str, key: str, default: str = "") -> str:
         """Get config value for a being"""
-        state = self.store.get_state()
+        state = self.store.state
         return state.config.get(being_id, {}).get(key, default)
     
     def get_colors(self, being_id: str) -> Dict[str, str]:
@@ -65,7 +65,7 @@ class AppStateManager:
             key=key,
             value=value
         )
-        self.store.append_event(event)
+        self.store.append(event)
 
 # Global app state instance
 _app_state = None

@@ -2,7 +2,7 @@
 Test todo application using event sourcing
 """
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 from pathlib import Path
 
