@@ -12,7 +12,6 @@ def event(cls):
 @event
 class Init:
     timestamp: int
-    content: str
     id: str
     capacity: int = 100
     model: str = ""

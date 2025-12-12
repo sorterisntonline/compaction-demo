@@ -11,7 +11,7 @@ def test_round_trip_load_and_replay(tmp_path):
     path = tmp_path / "being.jsonl"
     being = Being(path=path, model="gpt", capacity=4)
 
-    append(being, Init(1, "", "init-id", capacity=4, model="gpt"))
+    append(being, Init(1, "init-id", capacity=4, model="gpt"))
     append(being, Thought(2, "first", "t1"))
     append(being, Thought(3, "second", "t2"))
 
@@ -33,7 +33,7 @@ def test_compact_with_stubbed_vote(monkeypatch, tmp_path):
         path = tmp_path / "being.jsonl"
         being = Being(path=path, model="gpt", capacity=4)
 
-        append(being, Init(1, "", "init", capacity=4, model="gpt"))
+        append(being, Init(1, "init", capacity=4, model="gpt"))
         # Add 6 memories to force compaction
         for i in range(6):
             append(being, Thought(10 + i, f"t{i}", str(i)))

@@ -121,7 +121,6 @@ def update_config(being_file: str, **kwargs):
     # Create new init with updated values
     new_data = {
         'timestamp': int(time.time() * 1000),
-        'content': kwargs.get('content', init_event.content),
         'id': init_event.id,
         'capacity': int(kwargs.get('capacity', init_event.capacity)),
         'model': kwargs.get('model', init_event.model),
@@ -274,12 +273,7 @@ def config_page(being_file: str) -> str:
     ]
     
     form = ["form", {"action": "/do", "method": "post"},
-        *snippet_hidden(f"update_config('{being_file}', capacity=$capacity, model=$model, vote_model=$vote_model, api_key=$api_key, content=$content)"),
-        
-        ["div.config-section",
-            ["label", "Content:"],
-            ["textarea", {"name": "content", "rows": "4"}, init.content or '']
-        ],
+        *snippet_hidden(f"update_config('{being_file}', capacity=$capacity, model=$model, vote_model=$vote_model, api_key=$api_key)"),
         
         ["div.config-section",
             ["label", "Capacity:"],

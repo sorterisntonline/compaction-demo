@@ -386,7 +386,7 @@ def cmd_init(args):
         print(f"❌ {path} already exists")
         sys.exit(1)
     being = Being(path, args.model, args.capacity, vote_model=args.vote_model, api_key=args.api_key)
-    append(being, Init(ts(), "", str(uuid.uuid4()), args.capacity, args.model, args.vote_model, args.api_key))
+    append(being, Init(ts(), str(uuid.uuid4()), args.capacity, args.model, args.vote_model, args.api_key))
     print(f"🧠 Created {path} | {args.model} | vote: {args.vote_model} | capacity {args.capacity}")
 
 

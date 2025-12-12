@@ -44,10 +44,8 @@ def convert_conversation(conv: dict, capacity: int = 100, model: str = "") -> li
 
     # Init event from conversation metadata
     init_ts = parse_timestamp(conv['created_at'])
-    init_content = conv.get('name', '') or conv.get('summary', '') or "Imported conversation"
     events.append(to_dict(Init(
         timestamp=init_ts,
-        content=init_content,
         id=conv['uuid'],
         capacity=capacity,
         model=model
