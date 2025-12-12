@@ -17,10 +17,8 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from hiccup import render, RawContent
-
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
+from app.hiccup import render, RawContent
+from app.state import get_app_state
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 ROOT = Path(__file__).parent.parent
@@ -105,36 +103,12 @@ def go(being_file: str, message: str = ''):
 
 
 def update_config(being_file: str, **kwargs):
-    path = BEINGS_DIR / f"{being_file}.jsonl"
-    events = load_events(path)
     
-    # Find the Init event to update
-    init_event = None
-    for event in events:
-        if isinstance(event, Init):
-            init_event = event
-            break
+    app_state = get_app_state()
+    primary = kwargs.get('primary_color', '#ccc')
+    secondary = kwargs.get('secondary_color', '#888')
     
-    if not init_event:
-        return PlainTextResponse("No init event found", status_code=400)
-    
-    # Create new init with updated values
-    new_data = {
-        'timestamp': int(time.time() * 1000),
-        'id': init_event.id,
-        'capacity': int(kwargs.get('capacity', init_event.capacity)),
-        'model': kwargs.get('model', init_event.model),
-        'vote_model': kwargs.get('vote_model', init_event.vote_model),
-        'api_key': kwargs.get('api_key', init_event.api_key),
-    }
-    
-    new_init = Init(**new_data)
-    
-    # Append the new config as an event (we can optimize this later)
-    with open(path, 'a') as f:
-        import json
-        from schema import to_dict
-        f.write(json.dumps(to_dict(new_init)) + '\n')
+    app_state.update_colors(being_file, primary, secondary)
     
     return RedirectResponse(f'/{being_file}/config', status_code=303)
 
@@ -261,11 +235,8 @@ def config_page(being_file: str) -> str:
     if not path.exists():
         return RedirectResponse("/", status_code=303)
     
-    events = load_events(path)
-    init = next((e for e in events if isinstance(e, Init)), None)
-    
-    if not init:
-        return PlainTextResponse("No init event found", status_code=400)
+    app_state = get_app_state()
+    colors = app_state.get_colors(being_file)
     
     top = ["div.top-bar",
         ["a", {"href": "/"}, "←"], " ",
@@ -273,26 +244,16 @@ def config_page(being_file: str) -> str:
     ]
     
     form = ["form", {"action": "/do", "method": "post"},
-        *snippet_hidden(f"update_config('{being_file}', capacity=$capacity, model=$model, vote_model=$vote_model, api_key=$api_key)"),
+        *snippet_hidden(f"update_config('{being_file}', primary_color=$primary_color, secondary_color=$secondary_color)"),
         
         ["div.config-section",
-            ["label", "Capacity:"],
-            ["input", {"type": "number", "name": "capacity", "value": str(init.capacity)}]
+            ["label", "Primary Color:"],
+            ["input", {"type": "color", "name": "primary_color", "value": colors["primary"]}]
         ],
         
         ["div.config-section",
-            ["label", "Model:"],
-            ["input", {"type": "text", "name": "model", "value": init.model or ''}]
-        ],
-        
-        ["div.config-section",
-            ["label", "Vote Model:"],
-            ["input", {"type": "text", "name": "vote_model", "value": init.vote_model or ''}]
-        ],
-        
-        ["div.config-section",
-            ["label", "API Key:"],
-            ["input", {"type": "password", "name": "api_key", "value": init.api_key or ''}]
+            ["label", "Secondary Color:"],
+            ["input", {"type": "color", "name": "secondary_color", "value": colors["secondary"]}]
         ],
         
         ["button", "save config"]
