@@ -1,4 +1,4 @@
-/* Minimal text UI */
+/* Minimal text UI - Mobile First */
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -13,6 +13,8 @@ html, body {
   --border: #ccc;
   --muted: #888;
   --hover-bg: #1a1a1a;
+  --mobile-padding: 1px;
+  --desktop-padding: 20px;
 }
 
 body {
@@ -24,29 +26,49 @@ body {
   font-size: 24px;
 }
 
+/* Desktop improvements */
+@media (min-width: 768px) {
+  body {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 var(--desktop-padding);
+  }
+  
+  textarea {
+    border: 1px solid var(--border);
+  }
+}
+
 a { color: var(--text); text-decoration: underline; }
 a:hover { text-decoration: none; }
 
 /* Top bar - thin, minimal */
 .top-bar {
-  padding: 1px;
+  padding: var(--mobile-padding);
   border-bottom: 1px solid var(--border);
   font-size: 18px;
 }
-.back-link { display: inline; }
 
 /* Index page */
 .beings {
-  padding: 1px;
+  padding: var(--mobile-padding);
 }
 .beings a {
   display: block;
-  padding: 1px;
+  padding: var(--mobile-padding);
   text-decoration: none;
   color: var(--text);
 }
 .beings a:hover {
   color: var(--muted);
+}
+
+@media (min-width: 768px) {
+  .top-bar,
+  .beings,
+  .beings a {
+    padding: var(--desktop-padding);
+  }
 }
 
 /* Main textarea - the focus */
@@ -105,12 +127,12 @@ button.sending {
 .event {
   border-bottom: 1px solid var(--border);
 }
-.event-summary {
-  padding: 1px;
+.event summary {
+  padding: var(--mobile-padding);
   cursor: pointer;
   font-size: 18px;
 }
-.event-summary:hover { 
+.event summary:hover { 
   background: var(--hover-bg);
 }
 .event-num { color: var(--muted); }
@@ -120,41 +142,39 @@ button.sending {
   color: var(--muted);
 }
 .event-content {
-  padding: 1px;
+  position: relative;
+  padding: var(--mobile-padding);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
   font-size: 20px;
   border-top: 1px solid var(--border);
 }
-.event-content .timestamp {
-  color: var(--muted);
-  font-size: 16px;
-}
-.event-meta {
-  font-size: 16px;
-  color: var(--muted);
-  border-top: 1px solid var(--border);
-  padding: 1px;
+
+@media (min-width: 768px) {
+  .event summary,
+  .event-content {
+    padding: var(--desktop-padding);
+  }
 }
 
 /* Vote details */
 .vote-memories {
   border-top: 1px solid var(--border);
-  padding: 1px;
+  padding: var(--mobile-padding);
 }
 .vote-reasoning {
   color: var(--muted);
   font-style: italic;
   font-size: 18px;
-  padding: 1px;
+  padding: var(--mobile-padding);
   border-bottom: 1px solid var(--border);
 }
 .memory-detail {
   border-bottom: 1px solid var(--border);
 }
 .memory-detail summary {
-  padding: 1px;
+  padding: var(--mobile-padding);
   cursor: pointer;
   font-size: 18px;
 }
@@ -162,7 +182,7 @@ button.sending {
   background: var(--hover-bg);
 }
 .memory-content {
-  padding: 1px;
+  padding: var(--mobile-padding);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
@@ -171,9 +191,18 @@ button.sending {
   color: var(--muted);
 }
 
+@media (min-width: 768px) {
+  .vote-memories,
+  .vote-reasoning,
+  .memory-detail summary,
+  .memory-content {
+    padding: var(--desktop-padding);
+  }
+}
+
 /* Memories link at bottom */
 .memories-link {
-  padding: 20px 1px;
+  padding: 20px var(--mobile-padding);
   border-top: 1px solid var(--border);
   text-align: center;
 }
@@ -190,7 +219,7 @@ button.sending {
   border-top: 1px solid var(--border);
 }
 .section-header {
-  padding: 10px 1px;
+  padding: 10px var(--mobile-padding);
   font-size: 20px;
   font-weight: bold;
   border-bottom: 1px solid var(--border);
@@ -200,12 +229,22 @@ button.sending {
   border-bottom: 1px solid var(--border);
 }
 .memory-item summary {
-  padding: 1px;
+  padding: var(--mobile-padding);
   cursor: pointer;
   font-size: 18px;
 }
 .memory-item summary:hover {
   background: var(--hover-bg);
+}
+
+@media (min-width: 768px) {
+  .memories-link {
+    padding: 20px var(--desktop-padding);
+  }
+  .section-header,
+  .memory-item summary {
+    padding: 10px var(--desktop-padding);
+  }
 }
 .memory-rank {
   color: var(--text);
@@ -224,7 +263,7 @@ button.sending {
   color: var(--muted);
 }
 .memory-full {
-  padding: 1px;
+  padding: var(--mobile-padding);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
@@ -232,10 +271,17 @@ button.sending {
   border-top: 1px solid var(--border);
 }
 .memory-id {
-  padding: 1px;
+  padding: var(--mobile-padding);
   font-size: 14px;
   color: var(--muted);
   font-family: monospace;
+}
+
+@media (min-width: 768px) {
+  .memory-full,
+  .memory-id {
+    padding: var(--desktop-padding);
+  }
 }
 
 /* Current vs compacted colors */
@@ -276,7 +322,7 @@ button.sending {
   border-bottom: 1px solid var(--border);
 }
 .snippet-info summary {
-  padding: 8px 1px;
+  padding: 8px var(--mobile-padding);
   cursor: pointer;
   font-size: 16px;
   color: var(--muted);
@@ -294,5 +340,40 @@ button.sending {
   overflow-wrap: break-word;
   color: #8f8;
   border-top: 1px solid var(--border);
+}
+
+@media (min-width: 768px) {
+  .snippet-info summary {
+    padding: 8px var(--desktop-padding);
+  }
+  .snippet-code {
+    padding: var(--desktop-padding);
+  }
+}
+
+/* Copy button */
+.copy-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 2px 4px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.copy-btn:hover { 
+  background: var(--hover-bg); 
+}
+
+@media (min-width: 768px) {
+  .copy-btn {
+    padding: 4px 6px;
+    font-size: 20px;
+  }
 }
 

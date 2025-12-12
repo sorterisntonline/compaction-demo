@@ -23,3 +23,13 @@ document.querySelector('form')?.addEventListener('submit', function() {
     localStorage.removeItem(storageKey);
 });
 
+// Copy to clipboard
+document.addEventListener('click', async e => {
+    if (!e.target.classList.contains('copy-btn')) return;
+    const container = e.target.parentElement;
+    const text = container.innerText;
+    await navigator.clipboard.writeText(text);
+    e.target.textContent = '✓';
+    setTimeout(() => e.target.textContent = '⧉', 1500);
+});
+

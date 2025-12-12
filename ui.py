@@ -27,6 +27,16 @@ BEINGS_DIR = ROOT
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
+# CSS cache busting
+def get_css_hash() -> str:
+    css_path = ROOT / "static" / "style.css"
+    if css_path.exists():
+        content = css_path.read_bytes()
+        return hashlib.sha256(content).hexdigest()[:8]
+    return "dev"
+
+CSS_HASH = get_css_hash()
+
 
 # === SIGNING ===
 
@@ -138,7 +148,7 @@ def head(title: str) -> list:
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
-        ["link", {"rel": "stylesheet", "href": "/static/style.css?v=2"}]
+        ["link", {"rel": "stylesheet", "href": f"/static/style.css?v={CSS_HASH}"}]
     ]
 
 
@@ -185,7 +195,9 @@ def being_page(being_file: str) -> str:
                 ["span.event-time", f"{ts_fmt(e.timestamp)} "],
                 ["span.event-preview", preview]
             ],
-            ["div.event-content", content] if content else None
+            ["div.event-content", 
+                ["span.copy-btn", "⧉"],
+                content] if content else None
         ]
     
     event_list = [render_event(e, i) for i, e in enumerate(events)]
