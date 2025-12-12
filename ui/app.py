@@ -21,7 +21,7 @@ from hiccup import render, RawContent
 
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 BEINGS_DIR = ROOT
 
 app = FastAPI()
@@ -102,6 +102,42 @@ def go(being_file: str, message: str = ''):
     return RedirectResponse(f'/{being_file}', status_code=303)
 
 
+def update_config(being_file: str, **kwargs):
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+    events = load_events(path)
+    
+    # Find the Init event to update
+    init_event = None
+    for event in events:
+        if isinstance(event, Init):
+            init_event = event
+            break
+    
+    if not init_event:
+        return PlainTextResponse("No init event found", status_code=400)
+    
+    # Create new init with updated values
+    new_data = {
+        'timestamp': int(time.time() * 1000),
+        'content': kwargs.get('content', init_event.content),
+        'id': init_event.id,
+        'capacity': int(kwargs.get('capacity', init_event.capacity)),
+        'model': kwargs.get('model', init_event.model),
+        'vote_model': kwargs.get('vote_model', init_event.vote_model),
+        'api_key': kwargs.get('api_key', init_event.api_key),
+    }
+    
+    new_init = Init(**new_data)
+    
+    # Append the new config as an event (we can optimize this later)
+    with open(path, 'a') as f:
+        import json
+        from schema import to_dict
+        f.write(json.dumps(to_dict(new_init)) + '\n')
+    
+    return RedirectResponse(f'/{being_file}/config', status_code=303)
+
+
 # === HELPERS ===
 
 def load_events(path: Path) -> list[Event]:
@@ -156,10 +192,18 @@ def head(title: str) -> list:
 
 def index_page() -> str:
     beings = find_beings()
-    links = [
-        ["a", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"]
-        for b in beings
-    ] if beings else ["No beings found"]
+    if beings:
+        links = []
+        for b in beings:
+            links.extend([
+                ["div.being-row",
+                    ["a.being-link", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"],
+                    " ",
+                    ["a.config-link", {"href": f"/{b['file']}/config"}, "config"]
+                ]
+            ])
+    else:
+        links = ["No beings found"]
     return render(["html", head("beings"), ["body", ["div.beings", *links]]])
 
 
@@ -211,6 +255,59 @@ def being_page(being_file: str) -> str:
     ]])
 
 
+def config_page(being_file: str) -> str:
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+    if not path.exists():
+        return RedirectResponse("/", status_code=303)
+    
+    events = load_events(path)
+    init = next((e for e in events if isinstance(e, Init)), None)
+    
+    if not init:
+        return PlainTextResponse("No init event found", status_code=400)
+    
+    top = ["div.top-bar",
+        ["a", {"href": "/"}, "←"], " ",
+        ["a", {"href": f"/{being_file}"}, being_file], " config"
+    ]
+    
+    form = ["form", {"action": "/do", "method": "post"},
+        *snippet_hidden(f"update_config('{being_file}', capacity=$capacity, model=$model, vote_model=$vote_model, api_key=$api_key, content=$content)"),
+        
+        ["div.config-section",
+            ["label", "Content:"],
+            ["textarea", {"name": "content", "rows": "4"}, init.content or '']
+        ],
+        
+        ["div.config-section",
+            ["label", "Capacity:"],
+            ["input", {"type": "number", "name": "capacity", "value": str(init.capacity)}]
+        ],
+        
+        ["div.config-section",
+            ["label", "Model:"],
+            ["input", {"type": "text", "name": "model", "value": init.model or ''}]
+        ],
+        
+        ["div.config-section",
+            ["label", "Vote Model:"],
+            ["input", {"type": "text", "name": "vote_model", "value": init.vote_model or ''}]
+        ],
+        
+        ["div.config-section",
+            ["label", "API Key:"],
+            ["input", {"type": "password", "name": "api_key", "value": init.api_key or ''}]
+        ],
+        
+        ["button", "save config"]
+    ]
+    
+    return render(["html", head(f"{being_file} config"), ["body", 
+        top, 
+        form
+    ]])
+
+
 # === ROUTES ===
 
 @app.exception_handler(Exception)
@@ -228,6 +325,13 @@ async def view_being(being_file: str):
     if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
         return RedirectResponse("/", status_code=303)
     return being_page(being_file)
+
+
+@app.get("/{being_file}/config", response_class=HTMLResponse)
+async def view_config(being_file: str):
+    if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
+        return RedirectResponse("/", status_code=303)
+    return config_page(being_file)
 
 
 @app.post("/do")

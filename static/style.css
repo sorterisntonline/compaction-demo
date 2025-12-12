@@ -386,3 +386,66 @@ button:disabled {
   }
 }
 
+/* Beings list with config */
+.being-row {
+  display: flex;
+  align-items: center;
+  padding: var(--mobile-padding);
+  border-bottom: 1px solid var(--border);
+}
+.being-link {
+  flex: 1;
+  text-decoration: none;
+  color: var(--text);
+}
+.being-link:hover {
+  color: var(--muted);
+}
+.config-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 18px;
+}
+.config-link:hover {
+  color: var(--text);
+}
+
+@media (min-width: 768px) {
+  .being-row {
+    padding: var(--desktop-padding);
+  }
+}
+
+/* Config page */
+.config-section {
+  border-bottom: 1px solid var(--border);
+  padding: var(--mobile-padding);
+}
+.config-section label {
+  display: block;
+  color: var(--text);
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+.config-section input,
+.config-section textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'Garamond', 'Georgia', 'Times New Roman', serif;
+  font-size: 20px;
+  padding: 4px;
+}
+.config-section input:focus,
+.config-section textarea:focus {
+  outline: none;
+  border-color: var(--text);
+}
+
+@media (min-width: 768px) {
+  .config-section {
+    padding: var(--desktop-padding);
+  }
+}
+
