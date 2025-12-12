@@ -4,37 +4,26 @@ Application state management using event sourcing
 import time
 from pathlib import Path
 from typing import Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from event_store import EventStore
 from .events import AppInit, ConfigChanged
 
 @dataclass  
 class AppState:
-    config: Dict[str, Dict[str, str]] = None  # being_id -> {key: value}
+    config: Dict[str, Dict[str, str]] = field(default_factory=dict)  # being_id -> {key: value}
     version: str = "0.1.0"
-    
-    def __post_init__(self):
-        if self.config is None:
-            self.config = {}
 
-def app_reducer(state: AppState, event) -> AppState:
+def app_reducer(state: AppState, event) -> None:
     """Reduce events to build app state"""
-    new_state = AppState(
-        config={being_id: cfg.copy() for being_id, cfg in state.config.items()},
-        version=state.version
-    )
-    
     match event:
         case AppInit(version=version):
-            new_state.version = version
+            state.version = version
             
         case ConfigChanged(being_id=being_id, key=key, value=value):
-            if being_id not in new_state.config:
-                new_state.config[being_id] = {}
-            new_state.config[being_id][key] = value
-    
-    return new_state
+            if being_id not in state.config:
+                state.config[being_id] = {}
+            state.config[being_id][key] = value
 
 class AppStateManager:
     def __init__(self, log_path: Path):

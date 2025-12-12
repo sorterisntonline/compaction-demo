@@ -56,10 +56,10 @@ class EventStore(Generic[State]):
     def _replay_all(self):
         """Replay all events to rebuild state"""
         for event in self._replay():
-            self.state = self.reducer(self.state, event)
+            self.reducer(self.state, event)
     
     def append(self, event) -> None:
         """Append event to file and update state"""
         with open(self.log_path, 'a') as f:
             f.write(json.dumps(to_dict(event)) + '\n')
-        self.state = self.reducer(self.state, event)
+        self.reducer(self.state, event)

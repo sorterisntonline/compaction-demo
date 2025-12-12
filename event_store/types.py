@@ -10,7 +10,7 @@ Event = TypeVar('Event')
 State = TypeVar('State')
 
 # Reducer function signature
-Reducer = Callable[[State, Event], State]
+Reducer = Callable[[State, Event], None]
 
 class EventProtocol(Protocol):
     """Protocol that all events must implement"""

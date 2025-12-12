@@ -8,29 +8,29 @@ from .todo_app import TodoApp, TodoState, todo_reducer, TodoCreated, TodoComplet
 
 def test_todo_reducer():
     """Test the todo reducer function"""
-    initial_state = TodoState()
+    state = TodoState()
     
     # Create todo
     event1 = TodoCreated(timestamp=100, todo_id="1", text="Buy milk")
-    state1 = todo_reducer(initial_state, event1)
+    todo_reducer(state, event1)
     
-    assert "1" in state1.todos
-    assert state1.todos["1"] == "Buy milk"
-    assert "1" not in state1.completed
+    assert "1" in state.todos
+    assert state.todos["1"] == "Buy milk"
+    assert "1" not in state.completed
     
     # Complete todo
     event2 = TodoCompleted(timestamp=200, todo_id="1")
-    state2 = todo_reducer(state1, event2)
+    todo_reducer(state, event2)
     
-    assert "1" in state2.todos
-    assert "1" in state2.completed
+    assert "1" in state.todos
+    assert "1" in state.completed
     
     # Delete todo
     event3 = TodoDeleted(timestamp=300, todo_id="1")
-    state3 = todo_reducer(state2, event3)
+    todo_reducer(state, event3)
     
-    assert "1" not in state3.todos
-    assert "1" not in state3.completed
+    assert "1" not in state.todos
+    assert "1" not in state.completed
 
 def test_todo_app():
     """Test complete todo application"""

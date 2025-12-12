@@ -4,7 +4,7 @@ Tests for event sourcing core functionality
 import pytest
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from event_store import event, EventStore
 from event_store.core import to_dict, from_dict
@@ -66,9 +66,9 @@ def test_append_and_replay():
         event2 = AnotherEvent(timestamp=200, value="second")
         event3 = TestEvent(timestamp=300, message="third", count=10)
         
-        store.append_event(event1)
-        store.append_event(event2)
-        store.append_event(event3)
+        store.append(event1)
+        store.append(event2)
+        store.append(event3)
         
         # Test replay by creating new store
         store2 = EventStore(log_path, count_reducer, CountState())
@@ -91,26 +91,15 @@ def test_empty_replay():
 @dataclass
 class CountState:
     count: int = 0
-    messages: list = None
-    
-    def __post_init__(self):
-        if self.messages is None:
-            self.messages = []
+    messages: list = field(default_factory=list)
 
-def count_reducer(state: CountState, event) -> CountState:
-    new_state = CountState(
-        count=state.count,
-        messages=state.messages.copy()
-    )
-    
+def count_reducer(state: CountState, event) -> None:
     match event:
         case TestEvent(message=msg, count=c):
-            new_state.count += c
-            new_state.messages.append(msg)
+            state.count += c
+            state.messages.append(msg)
         case AnotherEvent(value=v):
-            new_state.messages.append(f"another: {v}")
-    
-    return new_state
+            state.messages.append(f"another: {v}")
 
 def test_event_store():
     """Test EventStore with state management"""
@@ -126,9 +115,9 @@ def test_event_store():
         assert store.state.messages == []
         
         # Add some events
-        store.append_event(TestEvent(timestamp=100, message="hello", count=5))
-        store.append_event(AnotherEvent(timestamp=200, value="world"))
-        store.append_event(TestEvent(timestamp=300, message="goodbye", count=3))
+        store.append(TestEvent(timestamp=100, message="hello", count=5))
+        store.append(AnotherEvent(timestamp=200, value="world"))
+        store.append(TestEvent(timestamp=300, message="goodbye", count=3))
         
         # Check final state
         assert store.state.count == 8
@@ -143,26 +132,23 @@ def test_event_store_persistence():
         initial_state = CountState()
         store1 = EventStore(log_path, count_reducer, initial_state)
         
-        store1.append_event(TestEvent(timestamp=100, message="first", count=10))
-        store1.append_event(TestEvent(timestamp=200, message="second", count=20))
+        store1.append(TestEvent(timestamp=100, message="first", count=10))
+        store1.append(TestEvent(timestamp=200, message="second", count=20))
         
-        state1 = store1.get_state()
-        assert state1.count == 30
-        assert state1.messages == ["first", "second"]
+        assert store1.state.count == 30
+        assert store1.state.messages == ["first", "second"]
         
         # Create second store from same file - should rebuild state
         store2 = EventStore(log_path, count_reducer, CountState())
         
-        state2 = store2.get_state()
-        assert state2.count == 30
-        assert state2.messages == ["first", "second"]
+        assert store2.state.count == 30
+        assert store2.state.messages == ["first", "second"]
         
         # Add more events to second store
-        store2.append_event(TestEvent(timestamp=300, message="third", count=5))
+        store2.append(TestEvent(timestamp=300, message="third", count=5))
         
-        state2_final = store2.get_state()
-        assert state2_final.count == 35
-        assert state2_final.messages == ["first", "second", "third"]
+        assert store2.state.count == 35
+        assert store2.state.messages == ["first", "second", "third"]
 
 def test_unknown_event_type():
     """Test handling of unknown event types"""

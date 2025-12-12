@@ -28,35 +28,22 @@ class TodoDeleted:
 # State definition
 @dataclass
 class TodoState:
-    todos: Dict[str, str] = None  # id -> text
-    completed: set = None  # set of completed ids
-    
-    def __post_init__(self):
-        if self.todos is None:
-            self.todos = {}
-        if self.completed is None:
-            self.completed = set()
+    todos: Dict[str, str] = field(default_factory=dict)  # id -> text
+    completed: set = field(default_factory=set)  # set of completed ids
 
 # Reducer
-def todo_reducer(state: TodoState, event) -> TodoState:
+def todo_reducer(state: TodoState, event) -> None:
     """Reduce events to build todo state"""
-    new_state = TodoState(
-        todos=state.todos.copy(),
-        completed=state.completed.copy()
-    )
-    
     match event:
         case TodoCreated(todo_id=todo_id, text=text):
-            new_state.todos[todo_id] = text
+            state.todos[todo_id] = text
             
         case TodoCompleted(todo_id=todo_id):
-            new_state.completed.add(todo_id)
+            state.completed.add(todo_id)
             
         case TodoDeleted(todo_id=todo_id):
-            new_state.todos.pop(todo_id, None)
-            new_state.completed.discard(todo_id)
-    
-    return new_state
+            state.todos.pop(todo_id, None)
+            state.completed.discard(todo_id)
 
 # Todo app class
 class TodoApp:
@@ -70,24 +57,24 @@ class TodoApp:
             todo_id=todo_id,
             text=text
         )
-        self.store.append_event(event)
+        self.store.append(event)
     
     def complete_todo(self, todo_id: str):
         event = TodoCompleted(
             timestamp=int(time.time() * 1000), 
             todo_id=todo_id
         )
-        self.store.append_event(event)
+        self.store.append(event)
     
     def delete_todo(self, todo_id: str):
         event = TodoDeleted(
             timestamp=int(time.time() * 1000),
             todo_id=todo_id
         )
-        self.store.append_event(event)
+        self.store.append(event)
     
     def list_todos(self) -> List[Dict[str, str]]:
-        state = self.store.get_state()
+        state = self.store.state
         return [
             {
                 "id": todo_id,
@@ -98,7 +85,7 @@ class TodoApp:
         ]
     
     def get_stats(self) -> Dict[str, int]:
-        state = self.store.get_state()
+        state = self.store.state
         total = len(state.todos)
         completed = len(state.completed)
         return {
