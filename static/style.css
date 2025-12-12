@@ -118,13 +118,15 @@ button:active {
   box-shadow: 0 0 0 var(--bg);
   background: #aaa;
 }
-button.sending {
+button.sending,
+button:disabled {
   background: var(--muted);
   color: var(--bg);
   cursor: wait;
   border-color: var(--muted) #fff #fff var(--muted);
   transform: translateY(2px);
   box-shadow: 0 0 0 var(--bg);
+  pointer-events: none;
 }
 
 /* Events - minimal */

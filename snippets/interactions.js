@@ -20,6 +20,7 @@ document.querySelector('form')?.addEventListener('submit', function() {
     const btn = this.querySelector('button');
     btn.classList.add('sending');
     btn.textContent = '...';
+    btn.disabled = true;
     localStorage.removeItem(storageKey);
 });
 
