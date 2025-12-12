@@ -102,22 +102,29 @@ button {
   background: var(--text);
   color: var(--bg);
   border: 6px solid;
-  border-color: var(--bg) var(--text) var(--text) var(--bg);
+  border-color: #fff var(--muted) var(--muted) #fff;
   font-family: 'Garamond', 'Georgia', 'Times New Roman', serif;
   font-size: 28px;
   cursor: pointer;
+  transform: translateY(0);
+  box-shadow: 0 2px 0 var(--bg);
 }
 button:hover { 
   opacity: 0.9;
 }
 button:active {
-  border-color: var(--text) var(--bg) var(--bg) var(--text);
+  border-color: var(--muted) #fff #fff var(--muted);
+  transform: translateY(2px);
+  box-shadow: 0 0 0 var(--bg);
+  background: #aaa;
 }
 button.sending {
   background: var(--muted);
   color: var(--bg);
   cursor: wait;
-  border-color: var(--text) var(--bg) var(--bg) var(--text);
+  border-color: var(--muted) #fff #fff var(--muted);
+  transform: translateY(2px);
+  box-shadow: 0 0 0 var(--bg);
 }
 
 /* Events - minimal */
