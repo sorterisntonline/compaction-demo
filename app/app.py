@@ -121,7 +121,9 @@ def load_events(path: Path) -> list[Event]:
     with open(path) as f:
         for line in f:
             if line.strip():
-                events.append(from_dict(json.loads(line)))
+                event = from_dict(json.loads(line))
+                if event is not None:
+                    events.append(event)
     return events
 
 

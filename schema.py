@@ -70,9 +70,15 @@ def to_dict(e: Event) -> dict:
     return {"v": VERSION, "type": type(e).__name__.lower(), **asdict(e)}
 
 
-def from_dict(d: dict) -> Event:
+def from_dict(d: dict) -> Event | None:
     if "memory_id" in d:
         d["id"] = d.pop("memory_id")
+    # Map old "message" type to "perception"
+    if d["type"] == "message":
+        d["type"] = "perception"
+    # Skip unknown event types
+    if d["type"] not in _registry:
+        return None
     cls = _registry[d["type"]]
     valid = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in d.items() if k in valid})
