@@ -51,6 +51,7 @@ class AppStateManager:
         return {
             "phone": self.get_config(being_id, "phone", ""),
             "telegram": self.get_config(being_id, "telegram", ""),
+            "telegram_bot_token": self.get_config(being_id, "telegram_bot_token", ""),
             "signal": self.get_config(being_id, "signal", ""),
             "matrix": self.get_config(being_id, "matrix", ""),
         }

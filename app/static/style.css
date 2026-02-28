@@ -468,6 +468,18 @@ button:disabled {
   outline: none;
   border-color: var(--text);
 }
+.config-hint {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.config-hint code {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  background: #0a0a0a;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+}
 
 @media (min-width: 768px) {
   .config-section {

@@ -54,7 +54,13 @@ def test_get_messaging_defaults(tmp_path):
     log_path = tmp_path / "app.jsonl"
     manager = AppStateManager(log_path)
     messaging = manager.get_messaging("some-being")
-    assert messaging == {"phone": "", "telegram": "", "signal": "", "matrix": ""}
+    assert messaging == {
+        "phone": "",
+        "telegram": "",
+        "telegram_bot_token": "",
+        "signal": "",
+        "matrix": "",
+    }
 
 
 def test_get_messaging_after_set_config(tmp_path):
@@ -68,3 +74,12 @@ def test_get_messaging_after_set_config(tmp_path):
     assert messaging["signal"] == "+15550000099"
     assert messaging["phone"] == ""
     assert messaging["matrix"] == ""
+    assert messaging["telegram_bot_token"] == ""
+
+
+def test_get_messaging_bot_token_stored(tmp_path):
+    """telegram_bot_token is stored and retrieved correctly."""
+    log_path = tmp_path / "app.jsonl"
+    manager = AppStateManager(log_path)
+    manager.set_config("being1", "telegram_bot_token", "123456:ABC-token")
+    assert manager.get_messaging("being1")["telegram_bot_token"] == "123456:ABC-token"

@@ -267,7 +267,8 @@ def config_page(being_file: str) -> str:
         *snippet_hidden(
             f"update_config('{being_file}', "
             "primary_color=$primary_color, secondary_color=$secondary_color, "
-            "phone=$phone, telegram=$telegram, signal=$signal, matrix=$matrix)"
+            "phone=$phone, telegram=$telegram, telegram_bot_token=$telegram_bot_token, "
+            "signal=$signal, matrix=$matrix)"
         ),
 
         ["div.config-section",
@@ -287,9 +288,20 @@ def config_page(being_file: str) -> str:
         ],
 
         ["div.config-section",
-            ["label", "Telegram username:"],
+            ["label", "Telegram bot username (generates t.me/username deep link):"],
             ["input", {"type": "text", "name": "telegram", "value": messaging["telegram"],
-                       "placeholder": "username"}]
+                       "placeholder": "my_being_bot"}]
+        ],
+
+        ["div.config-section",
+            ["label", "Telegram bot token (from @BotFather):"],
+            ["input", {"type": "password", "name": "telegram_bot_token",
+                       "value": messaging["telegram_bot_token"],
+                       "placeholder": "123456:ABC-..."}],
+            ["div.config-hint",
+                "Run the bot: ",
+                ["code", f"python -m app.telegram_bot {being_file} --token <TOKEN>"]
+            ]
         ],
 
         ["div.config-section",
