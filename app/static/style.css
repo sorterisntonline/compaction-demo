@@ -415,7 +415,34 @@ button:disabled {
   }
 }
 
-/* Config page */
+/* Messaging bubbles */
+.msg-bubbles {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-left: 8px;
+}
+.msg-bubble {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 14px;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  color: var(--bg);
+  background: var(--text);
+  white-space: nowrap;
+}
+.msg-bubble:hover {
+  opacity: 0.8;
+  text-decoration: none;
+}
+.msg-sms     { background: #4a4; color: #fff; border-color: #4a4; }
+.msg-telegram { background: #229ED9; color: #fff; border-color: #229ED9; }
+.msg-signal  { background: #3A76F0; color: #fff; border-color: #3A76F0; }
+.msg-matrix  { background: #0DBD8B; color: #fff; border-color: #0DBD8B; }
+
 .config-section {
   border-bottom: 1px solid var(--border);
   padding: var(--mobile-padding);
@@ -440,6 +467,18 @@ button:disabled {
 .config-section textarea:focus {
   outline: none;
   border-color: var(--text);
+}
+.config-hint {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.config-hint code {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  background: #0a0a0a;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
 }
 
 @media (min-width: 768px) {

@@ -45,6 +45,16 @@ class AppStateManager:
             "primary": self.get_config(being_id, "primary_color", "#ccc"),
             "secondary": self.get_config(being_id, "secondary_color", "#888")
         }
+
+    def get_messaging(self, being_id: str) -> Dict[str, str]:
+        """Get messaging handles for a being"""
+        return {
+            "phone": self.get_config(being_id, "phone", ""),
+            "telegram": self.get_config(being_id, "telegram", ""),
+            "telegram_bot_token": self.get_config(being_id, "telegram_bot_token", ""),
+            "signal": self.get_config(being_id, "signal", ""),
+            "matrix": self.get_config(being_id, "matrix", ""),
+        }
     
     def set_config(self, being_id: str, key: str, value: str):
         """Set config value for a being"""

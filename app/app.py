@@ -104,12 +104,26 @@ def go(being_file: str, message: str = ''):
 
 def update_config(being_file: str, **kwargs):
     app_state = get_app_state()
-    
+
     for key, value in kwargs.items():
         if value:  # Only set non-empty values
             app_state.set_config(being_file, key, value)
-    
+
     return RedirectResponse(f'/{being_file}/config', status_code=303)
+
+
+def _messaging_bubbles(messaging: dict) -> list:
+    """Return a list of messaging link elements for given handles."""
+    links = []
+    if messaging.get("phone"):
+        links.append(["a.msg-bubble.msg-sms", {"href": f"sms:{messaging['phone']}"}, "SMS"])
+    if messaging.get("telegram"):
+        links.append(["a.msg-bubble.msg-telegram", {"href": f"https://t.me/{messaging['telegram']}"}, "TG"])
+    if messaging.get("signal"):
+        links.append(["a.msg-bubble.msg-signal", {"href": f"https://signal.me/#p/{messaging['signal']}"}, "Signal"])
+    if messaging.get("matrix"):
+        links.append(["a.msg-bubble.msg-matrix", {"href": f"https://matrix.to/#/{messaging['matrix']}"}, "Matrix"])
+    return links
 
 
 # === HELPERS ===
@@ -168,16 +182,20 @@ def head(title: str) -> list:
 
 def index_page() -> str:
     beings = find_beings()
+    app_state = get_app_state()
     if beings:
         links = []
         for b in beings:
-            links.extend([
-                ["div.being-row",
-                    ["a.being-link", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"],
-                    " ",
-                    ["a.config-link", {"href": f"/{b['file']}/config"}, "config"]
-                ]
-            ])
+            messaging = app_state.get_messaging(b['file'])
+            bubbles = _messaging_bubbles(messaging)
+            row_children = [
+                ["a.being-link", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"],
+                " ",
+                ["a.config-link", {"href": f"/{b['file']}/config"}, "config"],
+            ]
+            if bubbles:
+                row_children.append(["span.msg-bubbles", *bubbles])
+            links.append(["div.being-row", *row_children])
     else:
         links = ["No beings found"]
     return render(["html", head("beings"), ["body", ["div.beings", *links]]])
@@ -235,33 +253,74 @@ def config_page(being_file: str) -> str:
     path = BEINGS_DIR / f"{being_file}.jsonl"
     if not path.exists():
         return RedirectResponse("/", status_code=303)
-    
+
     app_state = get_app_state()
     colors = app_state.get_colors(being_file)
-    
+    messaging = app_state.get_messaging(being_file)
+
     top = ["div.top-bar",
         ["a", {"href": "/"}, "←"], " ",
         ["a", {"href": f"/{being_file}"}, being_file], " config"
     ]
-    
+
     form = ["form", {"action": "/do", "method": "post"},
-        *snippet_hidden(f"update_config('{being_file}', primary_color=$primary_color, secondary_color=$secondary_color)"),
-        
+        *snippet_hidden(
+            f"update_config('{being_file}', "
+            "primary_color=$primary_color, secondary_color=$secondary_color, "
+            "phone=$phone, telegram=$telegram, telegram_bot_token=$telegram_bot_token, "
+            "signal=$signal, matrix=$matrix)"
+        ),
+
         ["div.config-section",
             ["label", "Primary Color:"],
             ["input", {"type": "color", "name": "primary_color", "value": colors["primary"]}]
         ],
-        
+
         ["div.config-section",
             ["label", "Secondary Color:"],
             ["input", {"type": "color", "name": "secondary_color", "value": colors["secondary"]}]
         ],
-        
+
+        ["div.config-section",
+            ["label", "Phone (SMS):"],
+            ["input", {"type": "tel", "name": "phone", "value": messaging["phone"],
+                       "placeholder": "+1234567890"}]
+        ],
+
+        ["div.config-section",
+            ["label", "Telegram bot username (generates t.me/username deep link):"],
+            ["input", {"type": "text", "name": "telegram", "value": messaging["telegram"],
+                       "placeholder": "my_being_bot"}]
+        ],
+
+        ["div.config-section",
+            ["label", "Telegram bot token (from @BotFather):"],
+            ["input", {"type": "password", "name": "telegram_bot_token",
+                       "value": messaging["telegram_bot_token"],
+                       "placeholder": "123456:ABC-..."}],
+            ["div.config-hint",
+                "Run the bot: ",
+                ["code", f"python -m app.telegram_bot {being_file} --token <TOKEN>"]
+            ]
+        ],
+
+        ["div.config-section",
+            ["label", "Signal number:"],
+            ["input", {"type": "tel", "name": "signal", "value": messaging["signal"],
+                       "placeholder": "+1234567890"}]
+        ],
+
+        ["div.config-section",
+            ["label", "Matrix ID:"],
+            ["input", {"type": "text", "name": "matrix", "value": messaging["matrix"],
+                       "placeholder": "@user:server.org"}]
+        ],
+
         ["button", "save config"]
     ]
-    
-    return render(["html", head(f"{being_file} config"), ["body", 
-        top, 
+
+    return render(["html", head(f"{being_file} config"), ["body",
+        top,
         form
     ]])
 
