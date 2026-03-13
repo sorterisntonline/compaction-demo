@@ -31,7 +31,7 @@ When the being reaches its memory limit, the *Subconscious Curator* (a cheaper/f
 The Web UI (Consensual Memory UI) provides a browser-based interface to observe and interact with the AI beings in real-time.
 
 1. **Start the server:** Run `./ui.sh` to start the backend.
-2. **Access the interface:** Open your browser to `http://localhost:<ADAM_PORT>` (default 8000).
+2. **Access the interface:** Open your browser to `http://localhost:<ADAM_PORT>` (default 64321).
 3. **View Beings:** The homepage automatically discovers all `*.jsonl` files in the root directory that have been initialized. It displays their current event count, model, and provides links to view or configure their UI.
 4. **Interact:** Clicking on a being opens its timeline. From here, you can view its entire event history (Thoughts, Perceptions, Responses, Votes, and Compactions) and send it new messages directly through the web form. The being will process your message and respond, appending the events to its file.
 
@@ -62,10 +62,10 @@ Make sure to configure your `OPENROUTER_API_KEY` alongside the optionally custom
 **Run the Web App (FastAPI):**
 
 ```bash
-# Uses ADAM_PORT from .env (defaults to 8000)
+# Uses ADAM_PORT from .env (defaults to 64321)
 ./ui.sh
 # OR manually
-uv run uvicorn app.app:app --port 8000 --reload
+uv run uvicorn app.app:app --port 64321 --reload
 ```
 
 **Run the CLI (`adam.py`):**

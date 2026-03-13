@@ -329,7 +329,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("dir", type=Path, nargs="?", default=ROOT)
-    parser.add_argument("--port", type=int, default=int(os.getenv("ADAM_PORT", "8000")))
+    parser.add_argument("--port", type=int, default=int(os.getenv("ADAM_PORT", "64321")))
     args = parser.parse_args()
     
     globals()['BEINGS_DIR'] = args.dir.resolve()
