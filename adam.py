@@ -26,7 +26,7 @@ from schema import Init, Thought, Perception, Response, Declaration, Vote, Compa
 ROOT = Path(__file__).parent
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(ROOT / ".env", override=True)
 API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 
@@ -82,7 +82,12 @@ def apply_event(being, event):
 def system_prompt(being):
     codebase = ROOT / "repomix-output.xml"
     if not codebase.exists():
-        raise FileNotFoundError("Run 'npx repomix' first")
+        print("repomix-output.xml missing. Running 'npx repomix'...", file=sys.stderr)
+        try:
+            subprocess.run(["npx", "--yes", "repomix"], check=True, cwd=ROOT)
+            print("Successfully ran 'npx repomix'.", file=sys.stderr)
+        except FileNotFoundError:
+            raise FileNotFoundError("Run 'npx repomix' first (npx command not found)")
     return f"You are a being with finite memory.\n\n{codebase.read_text()}"
 
 

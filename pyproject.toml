@@ -44,3 +44,7 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 ignore = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "event_store"]
+
