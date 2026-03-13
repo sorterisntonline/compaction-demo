@@ -99,6 +99,7 @@ dependencies = [
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "python-dotenv" },
     { name = "python-hiccup" },
+    { name = "python-multipart" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tenacity" },
@@ -123,6 +124,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-hiccup", specifier = ">=0.4.0" },
+    { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scipy", specifier = ">=1.10.0" },
     { name = "tenacity", specifier = ">=8.2.0" },
@@ -789,6 +791,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3a/7c/4c3bedb2b4a2be54b5ae4073bd232360d4a60d85cc1a66a31331f16e9a9a/python_hiccup-0.4.0.tar.gz", hash = "sha256:15fdfa062a45b57238f3d69626f2179d08adb864114317c6fa1b01257eeebf85", size = 19401, upload-time = "2025-09-07T16:02:01.673Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/05/628c7bc3cca816ca1a8473a2c8940d24525618ca8ef9b92e89d5ab99fbe7/python_hiccup-0.4.0-py3-none-any.whl", hash = "sha256:2c817351f01040a4d1a2be49e2aec62221d7db583f495d2f7d87329a497d4f66", size = 6148, upload-time = "2025-09-07T16:02:00.801Z" },
+]
+
+[[package]]
+name = "python-multipart"
+version = "0.0.22"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/01/979e98d542a70714b0cb2b6728ed0b7c46792b695e3eaec3e20711271ca3/python_multipart-0.0.22.tar.gz", hash = "sha256:7340bef99a7e0032613f56dc36027b959fd3b30a787ed62d310e951f7c3a3a58", size = 37612, upload-time = "2026-01-25T10:15:56.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/d0/397f9626e711ff749a95d96b7af99b9c566a9bb5129b8e4c10fc4d100304/python_multipart-0.0.22-py3-none-any.whl", hash = "sha256:2b2cd894c83d21bf49d702499531c7bafd057d730c201782048f7945d82de155", size = 24579, upload-time = "2026-01-25T10:15:54.811Z" },
 ]
 
 [[package]]
