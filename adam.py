@@ -431,10 +431,17 @@ def main():
     
     init_p = sub.add_parser("init")
     init_p.add_argument("file", type=Path)
-    init_p.add_argument("--model", required=True)
-    init_p.add_argument("--vote-model", required=True)
-    init_p.add_argument("--capacity", type=int, required=True)
-    init_p.add_argument("--api-key", required=True)
+    
+    # Try environment variables first, then default, but allow CLI override
+    default_model = os.getenv("ADAM_MODEL", "anthropic/claude-3.5-sonnet")
+    default_vote = os.getenv("ADAM_VOTE_MODEL", "google/gemini-2.5-flash")
+    default_cap = int(os.getenv("ADAM_CAPACITY", "100"))
+    default_key = os.getenv("OPENROUTER_API_KEY", "")
+    
+    init_p.add_argument("--model", default=default_model, help="Conscious model for the being")
+    init_p.add_argument("--vote-model", default=default_vote, help="Vote model for compaction curation")
+    init_p.add_argument("--capacity", type=int, default=default_cap, help="Maximum memories before compaction")
+    init_p.add_argument("--api-key", default=default_key, help="OpenRouter API Key")
     
     run_p = sub.add_parser("run")
     run_p.add_argument("file", type=Path)
