@@ -47,7 +47,10 @@ Make sure to configure your `OPENROUTER_API_KEY` alongside the optionally custom
 **Run the Web App (FastAPI):**
 
 ```bash
-uv run uvicorn app.app:app --reload
+# Uses ADAM_PORT from .env (defaults to 8000)
+./ui.sh
+# OR manually
+uv run uvicorn app.app:app --port 8000 --reload
 ```
 
 **Run the CLI (`adam.py`):**
