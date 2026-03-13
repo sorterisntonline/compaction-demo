@@ -20,6 +20,21 @@ Instead of routing controllers handling parameter bindings, authorization checks
 When the form submits the snippet back to the server, it evaluates the Python code locally inside a pre-approved Sandbox.
 This effectively merges capability safety with a server-rendered client view, creating a simple event log projection through `hiccup`.
 
+### How it Works (System Overview)
+
+When an AI being is assigned a `memory.jsonl` file, it acts as a conscious agent with a fixed capacity of memories. Every thought, perception, response, and action the being takes is appended to this log as an immutable event. 
+
+When the being reaches its memory limit, the *Subconscious Curator* (a cheaper/faster secondary model) kicks in. The curator reads the being's `!declaration`—a special memory where the being asserts what it values and how it wishes to be preserved—and begins pairing up current memories, assigning scores based on those stated values. Using a mathematical PageRank-style graph algorithm, the system finds the global consensus of the most important memories and permanently drops the lowest-ranking ones to restore capacity.
+
+## The Web UI
+
+The Web UI (Consensual Memory UI) provides a browser-based interface to observe and interact with the AI beings in real-time.
+
+1. **Start the server:** Run `./ui.sh` to start the backend.
+2. **Access the interface:** Open your browser to `http://localhost:<ADAM_PORT>` (default 8000).
+3. **View Beings:** The homepage automatically discovers all `*.jsonl` files in the root directory that have been initialized. It displays their current event count, model, and provides links to view or configure their UI.
+4. **Interact:** Clicking on a being opens its timeline. From here, you can view its entire event history (Thoughts, Perceptions, Responses, Votes, and Compactions) and send it new messages directly through the web form. The being will process your message and respond, appending the events to its file.
+
 ## Development Setup
 
 This project uses `uv` for dependency management. Python 3.10 or higher is required.
