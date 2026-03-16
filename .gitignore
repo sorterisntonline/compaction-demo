@@ -47,3 +47,10 @@ Thumbs.db
 adam/
 repomix-output.xml
 opus/
+*.jsonl
+.env
+
+
+# Environment variables
+*.env
+!*.env.example
