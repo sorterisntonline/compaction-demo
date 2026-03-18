@@ -21,6 +21,9 @@ from datetime import datetime
 # Events cache: being_file -> (mtime, rendered_event_list)
 _events_cache: dict[str, tuple[float, list]] = {}
 
+# Compaction progress: being_file -> {current, total, phase} or None when done
+_compaction_progress: dict[str, dict | None] = {}
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -146,6 +149,38 @@ def go(being_file: str, message: str = ''):
 
     threading.Thread(target=run, daemon=True).start()
     return RedirectResponse(f'/{being_file}', status_code=303)
+
+
+def compact_async(being_file: str, strategy: str = "default"):
+    from adam import load, compact, current_memories, STRATEGIES
+    from schema import Thought, Perception, Response
+
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+    if not path.exists():
+        return PlainTextResponse(f"Being {being_file} not found", status_code=404)
+    being = load(path)
+    mems = [m for m in current_memories(being) if isinstance(m, (Thought, Perception, Response))]
+    budget = being.capacity // 2
+    if len(mems) <= budget:
+        return PlainTextResponse(
+            f"Already under budget ({len(mems)}/{budget}). No compaction needed.",
+            status_code=200,
+        )
+
+    strategy_obj = STRATEGIES.get(strategy, STRATEGIES["default"])
+
+    def run():
+        try:
+            def on_progress(current, total, phase):
+                _compaction_progress[being_file] = {"current": current, "total": total, "phase": phase}
+
+            _compaction_progress[being_file] = {"current": 0, "total": 1, "phase": "Starting"}
+            compact(being, strategy_obj, on_progress=on_progress)
+        finally:
+            _compaction_progress.pop(being_file, None)
+
+    threading.Thread(target=run, daemon=True).start()
+    return RedirectResponse(f"/{being_file}", status_code=303)
 
 
 def redact(being_file: str):
@@ -288,6 +323,17 @@ def sse_event(selector: str, html: str) -> str:
     return "\n".join(lines)
 
 
+def render_progress_bar(current: int, total: int, phase: str) -> str:
+    pct = int(100 * current / total) if total else 0
+    return render(
+        [
+            "div#compaction-progress.compaction-progress",
+            ["div.progress-bar", ["div.progress-fill", {"style": f"width: {pct}%"}]],
+            ["span.progress-text", f"{phase} {current}/{total}"],
+        ]
+    )
+
+
 # === PAGES ===
 
 def index_page() -> str:
@@ -336,6 +382,16 @@ def being_page(being_file: str) -> str:
         ["button", "⬆ push git"]
     ]
 
+    compact_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
+        *snippet_hidden(f"compact_async('{being_file}', $strategy)"),
+        ["select", {"name": "strategy"},
+            ["option", {"value": "default"}, "default"],
+            ["option", {"value": "resurrection"}, "resurrection"],
+            ["option", {"value": "dream"}, "dream"],
+        ],
+        ["button", "🗜️ compact"]
+    ]
+
     poem_js = RawContent(f"""
 import {{ Idiomorph }} from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
 const es = new EventSource('/sse/{being_file}');
@@ -353,7 +409,8 @@ es.addEventListener('app', applyPatch);
 
     return render(["html", head(being_file), ["body",
         top,
-        ["div", redact_form, " ", push_form],
+        ["div", redact_form, " ", push_form, " ", compact_form],
+        ["div#compaction-progress.compaction-progress"],
         form,
         ["script", RawContent(load_script("interactions.js"))],
         ["script", {"type": "module"}, poem_js],
@@ -451,6 +508,7 @@ async def sse_endpoint(being_file: str, request: Request):
 
     async def generate():
         last_mtime = 0.0
+        last_progress = None
         while True:
             if await request.is_disconnected():
                 break
@@ -460,9 +518,20 @@ async def sse_endpoint(being_file: str, request: Request):
                     last_mtime = mtime
                     html = render_events_div(being_file, mtime)
                     yield sse_event("#events", html)
+
+                progress = _compaction_progress.get(being_file)
+                if progress != last_progress:
+                    last_progress = progress
+                    if progress:
+                        bar_html = render_progress_bar(
+                            progress["current"], progress["total"], progress["phase"]
+                        )
+                        yield sse_event("#compaction-progress", bar_html)
+                    else:
+                        yield sse_event("#compaction-progress", render(["div#compaction-progress.compaction-progress"]))
             except Exception:
                 pass
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.15 if being_file in _compaction_progress else 1.0)
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache",

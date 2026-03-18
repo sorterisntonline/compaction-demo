@@ -118,6 +118,15 @@ button:active {
   box-shadow: 0 0 0 var(--bg);
   background: #aaa;
 }
+select {
+  padding: 8px 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 16px;
+  margin-right: 8px;
+}
 button.sending,
 button:disabled {
   background: var(--muted);
@@ -127,6 +136,36 @@ button:disabled {
   transform: translateY(2px);
   box-shadow: 0 0 0 var(--bg);
   pointer-events: none;
+}
+
+/* Compaction progress bar */
+.compaction-progress {
+  padding: var(--mobile-padding);
+  border-bottom: 1px solid var(--border);
+}
+.compaction-progress:empty {
+  display: none;
+}
+.compaction-progress .progress-bar {
+  height: 8px;
+  background: var(--muted);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.compaction-progress .progress-fill {
+  height: 100%;
+  background: var(--text);
+  transition: width 0.15s ease;
+}
+.compaction-progress .progress-text {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+@media (min-width: 768px) {
+  .compaction-progress {
+    padding: var(--desktop-padding);
+  }
 }
 
 /* Events - minimal */

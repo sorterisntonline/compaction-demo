@@ -11,7 +11,6 @@ import tempfile
 import time
 import uuid
 
-from tqdm import tqdm
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -307,7 +306,7 @@ def _weighted_sample(memories, k, id_to_rank, n):
     return chosen
 
 
-def compact(being, strategy=None):
+def compact(being, strategy=None, on_progress=None):
     if strategy is None:
         strategy = STRATEGIES["default"]
 
@@ -375,7 +374,10 @@ def compact(being, strategy=None):
             new_pairs.append((a, b))
     
     if new_pairs:
-        for a_id, b_id in tqdm(new_pairs, desc="Voting", unit="pair"):
+        total = len(new_pairs)
+        for i, (a_id, b_id) in enumerate(new_pairs):
+            if on_progress:
+                on_progress(i + 1, total, "Voting")
             a, b = all_id_to_mem[a_id], all_id_to_mem[b_id]
             try:
                 comparisons.append((a, b, vote(being, a, b)))
