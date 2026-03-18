@@ -296,22 +296,14 @@ def compact(being, strategy=None, on_progress=None):
     all_ids = set(all_id_to_mem.keys())
     
     # Build comparisons using ALL votes (including those with compacted memories)
-    # Cap at MAX_COMPARISONS to avoid OOM on large histories — rank centrality
-    # converges well with a representative sample.
-    MAX_COMPARISONS = 500
     existing_pairs = []
     comparisons = []
-    all_vote_items = list(being.votes.items())
-    # Shuffle so the sample isn't biased toward oldest votes
-    random.shuffle(all_vote_items)
-    for (low_id, high_id), score in all_vote_items:
+    for (low_id, high_id), score in being.votes.items():
         if low_id in all_ids and high_id in all_ids:
             existing_pairs.append((low_id, high_id))
             comparisons.append((all_id_to_mem[low_id], all_id_to_mem[high_id], score))
-            if len(comparisons) >= MAX_COMPARISONS:
-                break
 
-    print(f"📊 {len(comparisons)} votes used for ranking (cap {MAX_COMPARISONS})")
+    print(f"📊 {len(comparisons)} total votes across all memories")
     
     # Find components in FULL graph (current + historical)
     components = find_components(all_ids, existing_pairs)
