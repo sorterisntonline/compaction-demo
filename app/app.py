@@ -286,21 +286,26 @@ def head(title: str) -> list:
 # === RENDER HELPERS ===
 
 def _mem_link(mid: str, memories: dict) -> list:
-    m = memories.get(mid)
-    preview = (m.content[:40] + "…") if m and getattr(m, 'content', '') else mid[:8]
-    return ["a", {"href": f"#evt-{mid}", "class": "mem-link"}, preview]
+    """memories: {id: (index, event)}"""
+    entry = memories.get(mid)
+    if entry:
+        idx, m = entry
+        content = getattr(m, 'content', '') or ''
+        preview = (content[:35] + "…") if content else mid[:8]
+        label = f"#{idx} {preview}"
+    else:
+        label = mid[:8]
+    return ["a", {"href": f"#evt-{mid}", "class": "mem-link"}, label]
 
 
 def render_event(e: Event, i: int, memories: dict = None) -> list:
+    """memories: {id: (index, event)}"""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
     attrs = {"id": f"evt-{eid}"} if eid else {}
 
     if isinstance(e, Vote):
-        a_preferred = e.vote_score >= 0
-        winner = e.vote_a_id if a_preferred else e.vote_b_id
-        loser  = e.vote_b_id if a_preferred else e.vote_a_id
         score_str = f"{e.vote_score:+d}"
         preview = ["span",
             _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
@@ -317,12 +322,16 @@ def render_event(e: Event, i: int, memories: dict = None) -> list:
         ]
 
     if isinstance(e, Compaction):
+        def sorted_ids(ids):
+            # sort by original event index so oldest appear first
+            return sorted(ids, key=lambda mid: memories[mid][0] if mid in memories else 9999)
+
         def section(label, ids):
             if not ids:
                 return None
             return ["div.compaction-section",
                 ["span.compaction-label", label],
-                *[_mem_link(mid, memories) for mid in ids],
+                *[_mem_link(mid, memories) for mid in sorted_ids(ids)],
             ]
         summary_txt = (f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
                        + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else ""))
@@ -357,7 +366,7 @@ def render_events_div(being_file: str, mtime: float = 0.0) -> str:
     cached_mtime, event_list = _events_cache.get(being_file, (None, None))
     if cached_mtime != mtime or event_list is None:
         events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
-        memories = {e.id: e for e in events if getattr(e, 'id', None)}
+        memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
         event_list = [render_event(e, i, memories) for i, e in enumerate(events)]
         event_list.reverse()
         _events_cache[being_file] = (mtime, event_list)
@@ -454,7 +463,7 @@ function applyPatch(e) {{
 es.addEventListener('app', applyPatch);
 """)
 
-    memories = {e.id: e for e in events if getattr(e, 'id', None)}
+    memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
     event_list = [render_event(e, i, memories) for i, e in enumerate(events)]
     event_list.reverse()
 
