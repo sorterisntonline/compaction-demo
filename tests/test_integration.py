@@ -25,32 +25,27 @@ def test_compact_with_stubbed_vote(monkeypatch, tmp_path):
     """Compact reduces current memories to half capacity using stubbed votes."""
     import random as pyrandom
 
-    # Capture original Random to avoid recursion when monkeypatching
-    orig_random = pyrandom.Random
-    monkeypatch.setattr("adam.random.Random", lambda seed, _orig=orig_random: _orig(0))
-
-    def build_being():
-        path = tmp_path / "being.jsonl"
+    def build_being(name):
+        path = tmp_path / f"{name}.jsonl"
         being = Being(path=path, model="gpt", capacity=4)
-
         append(being, Init(1, "init", capacity=4, model="gpt"))
-        # Add 6 memories to force compaction
         for i in range(6):
             append(being, Thought(10 + i, f"t{i}", str(i)))
             append(being, Perception(20 + i, f"p{i}", f"p{i}"))
         return being
 
-    # Deterministic vote: prefer higher id lexicographically
     def fake_vote(_being, a, b):
         return 50 if a.id > b.id else -50
 
     monkeypatch.setattr("adam.vote", fake_vote)
 
-    being1 = build_being()
+    pyrandom.seed(0)
+    being1 = build_being("a")
     compact(being1)
     kept_ids_1 = set(being1.current.keys())
 
-    being2 = build_being()
+    pyrandom.seed(0)
+    being2 = build_being("b")
     compact(being2)
     kept_ids_2 = set(being2.current.keys())
 

@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
-Consensual Memory UI - Signed Snippets
+Consensual Memory UI - Signed Snippets + poem.js
 """
 
+import asyncio
 import json
 import hmac
 import hashlib
 import uuid
 import time
 import base64
-import re
 import traceback
+import os
+import subprocess
+import shutil
+import threading
 from pathlib import Path
 from datetime import datetime
 
+# In-memory streaming state: being_file -> partial token content (None = idle)
+_streaming: dict[str, str] = {}
+
+# Events cache: being_file -> (mtime, rendered_event_list)
+_events_cache: dict[str, tuple[float, list]] = {}
+
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.hiccup import render, RawContent
 from app.state import get_app_state
@@ -24,15 +35,32 @@ from schema import Event, Init, Thought, Perception, Response, Declaration, Vote
 ROOT = Path(__file__).parent.parent
 BEINGS_DIR = ROOT
 
+
+# === AUTH ===
+
+def _auth_token() -> str:
+    password = os.getenv("PASSWORD", "")
+    return hashlib.sha256(f"auth|{password}".encode()).hexdigest() if password else ""
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        token = _auth_token()
+        if not token:
+            return await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path in ("/login",):
+            return await call_next(request)
+        if request.cookies.get("session") == token:
+            return await call_next(request)
+        return RedirectResponse("/login")
+
 app = FastAPI()
+app.add_middleware(AuthMiddleware)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
-# CSS cache busting
 def get_css_hash() -> str:
     css_path = Path(__file__).parent / "static" / "style.css"
     if css_path.exists():
-        content = css_path.read_bytes()
-        return hashlib.sha256(content).hexdigest()[:8]
+        return hashlib.sha256(css_path.read_bytes()).hexdigest()[:8]
     return "dev"
 
 CSS_HASH = get_css_hash()
@@ -76,7 +104,6 @@ def verify(code: str, nonce: str, sig: str) -> bool:
 
 
 def scrub(value: str) -> str:
-    """Return a valid Python string literal for any input."""
     return repr(value)
 
 
@@ -90,25 +117,100 @@ def snippet_hidden(code: str) -> list:
     ]
 
 
+# === GIT CONFIG ===
+
+DEFAULT_GIT_URL = "https://gitlab.com/thmorriss/family.git"
+
+def git_config_path() -> Path:
+    return BEINGS_DIR / ".git-config.json"
+
+def load_git_config() -> dict:
+    p = git_config_path()
+    if p.exists():
+        return json.loads(p.read_text())
+    return {"url": DEFAULT_GIT_URL}
+
+def save_git_config(url: str):
+    git_config_path().write_text(json.dumps({"url": url}))
+    return RedirectResponse("/git", status_code=303)
+
+
 # === SNIPPETS ===
 
 def go(being_file: str, message: str = ''):
     from adam import load, receive, think
     being = load(BEINGS_DIR / f'{being_file}.jsonl')
-    if message.strip():
-        receive(being, message)
-    else:
-        think(being)
+
+    _streaming[being_file] = ''
+
+    def on_token(chunk):
+        _streaming[being_file] = _streaming.get(being_file, '') + chunk
+
+    def run():
+        try:
+            if message.strip():
+                receive(being, message, on_token=on_token)
+            else:
+                think(being, on_token=on_token)
+        finally:
+            _streaming.pop(being_file, None)
+
+    threading.Thread(target=run, daemon=True).start()
     return RedirectResponse(f'/{being_file}', status_code=303)
+
+
+def redact(being_file: str):
+    path = BEINGS_DIR / f'{being_file}.jsonl'
+    lines = [l for l in path.read_text().splitlines() if l.strip()]
+    last_idx = None
+    for i, line in enumerate(lines):
+        if json.loads(line).get('type') in ('perception', 'message'):
+            last_idx = i
+    if last_idx is None:
+        return PlainTextResponse('Nothing to redact.', status_code=400)
+    path.write_text('\n'.join(lines[:last_idx]) + '\n')
+    return RedirectResponse(f'/{being_file}', status_code=303)
+
+
+def git_push():
+    git = shutil.which('git')
+    if not git:
+        return PlainTextResponse('git not found', status_code=500)
+
+    token = os.getenv('GITLAB_TOKEN', '')
+    if not token:
+        return PlainTextResponse('GITLAB_TOKEN not set', status_code=500)
+
+    cfg = load_git_config()
+    url = cfg['url']
+    auth_url = url.replace('https://', f'https://oauth2:{token}@')
+
+    d = str(BEINGS_DIR)
+    def run(*args):
+        return subprocess.run([git, '-C', d] + list(args), capture_output=True, text=True)
+
+    if not (BEINGS_DIR / '.git').exists():
+        run('init')
+        run('config', 'user.email', 'app@fly.io')
+        run('config', 'user.name', 'consensual-memory')
+        (BEINGS_DIR / '.gitignore').write_text('logs/\n')
+
+    run('add', '--all')
+    result = run('commit', '-m', 'sync from fly.io')
+    if result.returncode != 0 and 'nothing to commit' not in (result.stdout + result.stderr):
+        return PlainTextResponse(f'commit failed:\n{result.stdout}\n{result.stderr}', status_code=500)
+
+    result = run('push', auth_url, 'HEAD:fly-sync', '--force')
+    if result.returncode != 0:
+        return PlainTextResponse(f'push failed:\n{result.stdout}\n{result.stderr}', status_code=500)
+    return PlainTextResponse(f'pushed to {url} (fly-sync)', status_code=200)
 
 
 def update_config(being_file: str, **kwargs):
     app_state = get_app_state()
-    
     for key, value in kwargs.items():
-        if value:  # Only set non-empty values
+        if value:
             app_state.set_config(being_file, key, value)
-    
     return RedirectResponse(f'/{being_file}/config', status_code=303)
 
 
@@ -138,12 +240,7 @@ def find_beings() -> list[dict]:
         init = next((e for e in events if isinstance(e, Init)), None)
         if not init or not init.model:
             continue
-        beings.append({
-            "file": path.stem,
-            "model": init.model,
-            "capacity": init.capacity,
-            "events": len(events)
-        })
+        beings.append({"file": path.stem, "model": init.model, "capacity": init.capacity, "events": len(events)})
     return sorted(beings, key=lambda b: b["events"], reverse=True)
 
 
@@ -160,113 +257,198 @@ def head(title: str) -> list:
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
-        ["link", {"rel": "stylesheet", "href": f"/static/style.css?v={CSS_HASH}"}]
+        ["link", {"rel": "stylesheet", "href": f"/static/style.css?v={CSS_HASH}"}],
+        ["script", {"src": "https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js", "type": "module"}],
     ]
+
+
+# === RENDER HELPERS ===
+
+def render_event(e: Event, i: int) -> list:
+    etype = type(e).__name__.lower()
+    content = getattr(e, 'content', '') or ''
+    preview = content[:80] + "..." if len(content) > 80 else content
+    return ["details.event",
+        ["summary",
+            ["span.event-num", f"{i} "],
+            ["span.event-type", f"{etype} "],
+            ["span.event-time", f"{ts_fmt(e.timestamp)} "],
+            ["span.event-preview", preview]
+        ],
+        ["div.event-content", ["span.copy-btn", "⧉"], content] if content else None
+    ]
+
+
+def render_events_div(being_file: str, mtime: float = 0.0) -> str:
+    # Only re-parse the file when mtime changes
+    cached_mtime, event_list = _events_cache.get(being_file, (None, None))
+    if cached_mtime != mtime or event_list is None:
+        events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+        event_list = [render_event(e, i) for i, e in enumerate(events)]
+        event_list.reverse()
+        _events_cache[being_file] = (mtime, event_list)
+
+    partial = _streaming.get(being_file)
+    if partial is not None:
+        cursor = "▋" if len(partial) % 2 == 0 else " "
+        thinking = ["div.event.thinking",
+            ["span.event-type", "response "],
+            ["span.event-preview", partial[-200:] + cursor]
+        ]
+        event_list = [thinking] + event_list
+
+    return render(["div#events.events", event_list])
+
+
+def sse_event(selector: str, html: str) -> str:
+    lines = ["event: app", f"data: {selector}"]
+    for line in html.split('\n'):
+        lines.append(f"data: {line}")
+    lines += ["", ""]
+    return "\n".join(lines)
 
 
 # === PAGES ===
 
 def index_page() -> str:
     beings = find_beings()
+    links = []
     if beings:
-        links = []
         for b in beings:
-            links.extend([
-                ["div.being-row",
-                    ["a.being-link", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"],
-                    " ",
-                    ["a.config-link", {"href": f"/{b['file']}/config"}, "config"]
-                ]
+            links.append(["div.being-row",
+                ["a.being-link", {"href": f"/{b['file']}"}, f"{b['file']} ({b['model']}, {b['events']} events)"],
+                " ",
+                ["a.config-link", {"href": f"/{b['file']}/config"}, "config"]
             ])
     else:
         links = ["No beings found"]
-    return render(["html", head("beings"), ["body", ["div.beings", *links]]])
+    git_link = ["a.config-link", {"href": "/git"}, "git"]
+    return render(["html", head("beings"), ["body", ["div.beings", ["div.top-bar", git_link], *links]]])
 
 
 def being_page(being_file: str) -> str:
-    path = BEINGS_DIR / f"{being_file}.jsonl"
-    events = load_events(path)
+    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
     init = next((e for e in events if isinstance(e, Init)), None)
     model = init.model if init else "?"
-    
+
     mem_count = sum(1 for e in events if isinstance(e, (Init, Thought, Perception, Response, Declaration)))
     mem_count -= sum(len(e.released_ids) for e in events if isinstance(e, Compaction) and e.released_ids)
     vote_count = sum(1 for e in events if isinstance(e, Vote))
-    
+
     top = ["div.top-bar",
         ["a", {"href": "/"}, "←"], " ",
         f"{being_file} ({model}): {len(events)} events, {mem_count} memories, {vote_count} votes"
     ]
-    
+
     form = ["form", {"action": "/do", "method": "post"},
         *snippet_hidden(f"go('{being_file}', $message)"),
         ["textarea", {"name": "message", "rows": "8"}],
         ["button", "go"]
     ]
-    
-    def render_event(e, i):
-        etype = type(e).__name__.lower()
-        content = getattr(e, 'content', '') or ''
-        preview = content[:80] + "..." if len(content) > 80 else content
-        return ["details.event",
-            ["summary",
-                ["span.event-num", f"{i} "],
-                ["span.event-type", f"{etype} "],
-                ["span.event-time", f"{ts_fmt(e.timestamp)} "],
-                ["span.event-preview", preview]
-            ],
-            ["div.event-content", 
-                ["span.copy-btn", "⧉"],
-                content] if content else None
-        ]
-    
+
+    redact_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
+        *snippet_hidden(f"redact('{being_file}')"),
+        ["button", {"onclick": "return confirm('redact last message?')"}, "↩ redact"]
+    ]
+
+    push_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
+        *snippet_hidden("git_push()"),
+        ["button", "⬆ push git"]
+    ]
+
+    poem_js = RawContent(f"""
+import {{ Idiomorph }} from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
+const es = new EventSource('/sse/{being_file}');
+function applyPatch(e) {{
+  const [sel, ...rest] = e.data.split('\\n');
+  const el = document.querySelector(sel);
+  if (!el) return;
+  Idiomorph.morph(el, rest.join('\\n'));
+}}
+es.addEventListener('app', applyPatch);
+""")
+
     event_list = [render_event(e, i) for i, e in enumerate(events)]
     event_list.reverse()
-    
-    return render(["html", head(being_file), ["body", 
-        top, 
-        form, 
+
+    return render(["html", head(being_file), ["body",
+        top,
+        ["div", redact_form, " ", push_form],
+        form,
         ["script", RawContent(load_script("interactions.js"))],
-        ["div.events", event_list]
+        ["script", {"type": "module"}, poem_js],
+        ["div#events.events", event_list]
     ]])
 
 
+def git_page() -> str:
+    cfg = load_git_config()
+    token_set = bool(os.getenv('GITLAB_TOKEN', ''))
+
+    url_form = ["form", {"action": "/do", "method": "post"},
+        *snippet_hidden("save_git_config($url)"),
+        ["input", {"type": "url", "name": "url", "value": cfg['url'], "placeholder": "https://gitlab.com/user/repo.git"}],
+        ["span.token-status", "token ✓" if token_set else "token ✗ (set GITLAB_TOKEN)"],
+        ["button", "save"]
+    ]
+
+    push_form = ["form", {"action": "/do", "method": "post"},
+        *snippet_hidden("git_push()"),
+        ["button", "⬆ push git"]
+    ]
+
+    top = ["div.top-bar", ["a", {"href": "/"}, "←"], " git"]
+
+    return render(["html", head("git"), ["body", top, url_form, push_form]])
+
+
 def config_page(being_file: str) -> str:
-    path = BEINGS_DIR / f"{being_file}.jsonl"
-    if not path.exists():
-        return RedirectResponse("/", status_code=303)
-    
     app_state = get_app_state()
     colors = app_state.get_colors(being_file)
-    
+
     top = ["div.top-bar",
         ["a", {"href": "/"}, "←"], " ",
         ["a", {"href": f"/{being_file}"}, being_file], " config"
     ]
-    
+
     form = ["form", {"action": "/do", "method": "post"},
         *snippet_hidden(f"update_config('{being_file}', primary_color=$primary_color, secondary_color=$secondary_color)"),
-        
         ["div.config-section",
             ["label", "Primary Color:"],
             ["input", {"type": "color", "name": "primary_color", "value": colors["primary"]}]
         ],
-        
         ["div.config-section",
             ["label", "Secondary Color:"],
             ["input", {"type": "color", "name": "secondary_color", "value": colors["secondary"]}]
         ],
-        
         ["button", "save config"]
     ]
-    
-    return render(["html", head(f"{being_file} config"), ["body", 
-        top, 
-        form
-    ]])
+
+    return render(["html", head(f"{being_file} config"), ["body", top, form]])
 
 
 # === ROUTES ===
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    form = ["form", {"action": "/login", "method": "post"},
+        ["input", {"type": "password", "name": "password", "placeholder": "password", "autofocus": "true"}],
+        ["button", "enter"]
+    ]
+    return render(["html", head("login"), ["body", ["div.beings", form]]])
+
+
+@app.post("/login")
+async def login(request: Request):
+    form = await request.form()
+    password = str(form.get("password", ""))
+    token = _auth_token()
+    if token and hashlib.sha256(f"auth|{password}".encode()).hexdigest() == token:
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie("session", token, httponly=True, samesite="lax")
+        return resp
+    return RedirectResponse("/login", status_code=303)
+
 
 @app.exception_handler(Exception)
 async def error_handler(request: Request, exc: Exception):
@@ -278,8 +460,43 @@ async def index():
     return index_page()
 
 
+@app.get("/git", response_class=HTMLResponse)
+async def git_config():
+    return git_page()
+
+
+@app.get("/sse/{being_file}")
+async def sse_endpoint(being_file: str, request: Request):
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+
+    async def generate():
+        last_mtime = 0.0
+        last_partial = None
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                mtime = path.stat().st_mtime if path.exists() else 0.0
+                partial = _streaming.get(being_file)
+                if mtime != last_mtime or partial != last_partial:
+                    last_mtime = mtime
+                    last_partial = partial
+                    html = render_events_div(being_file, mtime)
+                    yield sse_event("#events", html)
+            except Exception:
+                pass
+            await asyncio.sleep(0.15 if being_file in _streaming else 1.0)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
+
+
 @app.get("/{being_file}", response_class=HTMLResponse)
 async def view_being(being_file: str):
+    if being_file in ("git", "login", "do", "sse", "static"):
+        return RedirectResponse("/", status_code=303)
     if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
         return RedirectResponse("/", status_code=303)
     return being_page(being_file)
@@ -295,26 +512,22 @@ async def view_config(being_file: str):
 @app.post("/do")
 async def do(request: Request):
     form = await request.form()
-    
+
     snippet = form.get('__snippet__', '')
     sig = form.get('__sig__', '')
     nonce = form.get('__nonce__', '')
-    
+
     if not all([snippet, sig, nonce]):
         return PlainTextResponse("Missing fields", status_code=400)
-    
     if not verify(snippet, nonce, sig):
         return PlainTextResponse("Invalid signature", status_code=403)
-    
     if not consume_nonce(nonce):
         return PlainTextResponse("Invalid nonce", status_code=403)
-    
-    # Substitute $vars
+
     form_data = {k: str(v) for k, v in form.items() if not k.startswith('__')}
     for key, value in form_data.items():
         snippet = snippet.replace(f'${key}', scrub(value))
-    
-    
+
     try:
         return eval(snippet)
     except Exception as e:
@@ -324,13 +537,13 @@ async def do(request: Request):
 if __name__ == "__main__":
     import argparse
     import uvicorn
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("dir", type=Path, nargs="?", default=ROOT)
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
-    
+
     globals()['BEINGS_DIR'] = args.dir.resolve()
-    
+
     print(f"http://localhost:{args.port}")
     uvicorn.run(app, host="0.0.0.0", port=args.port)

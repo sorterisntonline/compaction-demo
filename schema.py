@@ -1,4 +1,4 @@
-from dataclasses import dataclass, fields, asdict
+from dataclasses import dataclass, field, fields, asdict
 
 VERSION = 2
 _registry: dict[str, type] = {}
@@ -61,6 +61,7 @@ class Compaction:
     timestamp: int
     kept_ids: list[str]
     released_ids: list[str]
+    resurrected_ids: list[str] = field(default_factory=list)
 
 
 Event = Init | Thought | Perception | Response | Declaration | Vote | Compaction

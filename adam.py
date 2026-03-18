@@ -52,6 +52,21 @@ class Being:
     api_key: str = ""  # OpenRouter API key for this being
 
 
+@dataclass
+class CompactionStrategy:
+    continuity: float = 1.0
+    resurrection: float = 0.0
+    random: float = 0.0
+    novelty: float = 0.0
+
+
+STRATEGIES = {
+    "default": CompactionStrategy(),
+    "resurrection": CompactionStrategy(continuity=0.5, resurrection=0.3, novelty=0.2),
+    "dream": CompactionStrategy(continuity=0.5, resurrection=0.2, random=0.1, novelty=0.2),
+}
+
+
 def apply_event(being, event):
     match event:
         case Vote(vote_a_id=a_id, vote_b_id=b_id, vote_score=score):
@@ -60,10 +75,13 @@ def apply_event(being, event):
             low, high = sorted([a_id, b_id])
             normalized = score if a_id == low else -score
             being.votes[(low, high)] = normalized
-        case Compaction(released_ids=released_ids):
+        case Compaction(released_ids=released_ids, resurrected_ids=resurrected_ids):
             for rid in released_ids:
                 if rid in being.current:
                     del being.current[rid]
+            for rid in resurrected_ids:
+                if rid in being.all_memories and rid not in being.current:
+                    being.current[rid] = being.all_memories[rid]
         case Init(capacity=capacity, model=model):
             being.capacity = capacity
             being.model = model
@@ -124,25 +142,55 @@ def append(being, event):
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
-def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = "") -> str:
-    # Use provided api_key or fall back to environment variable
+def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = "",
+        on_token=None) -> str:
+    """Call the LLM. If on_token is provided, stream tokens calling on_token(chunk) as they arrive."""
     key = api_key or API_KEY
     if not key:
         raise ValueError("No API key provided. Set OPENROUTER_API_KEY in .env or pass api_key to llm()")
-    
-    r = httpx.post(
+
+    payload = {"model": model, "temperature": temp, "max_tokens": 4000,
+               "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": user}]}
+
+    if on_token is None:
+        r = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json=payload,
+            timeout=120.0,
+        )
+        r.raise_for_status()
+        content = r.json()["choices"][0]["message"]["content"].strip()
+        if not content:
+            raise ValueError("LLM returned empty response")
+        return content
+
+    # Streaming path
+    payload["stream"] = True
+    content = []
+    with httpx.stream(
+        "POST",
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": model, "temperature": temp, "max_tokens": 4000,
-              "messages": [{"role": "system", "content": system},
-                           {"role": "user", "content": user}]},
+        json=payload,
         timeout=120.0,
-    )
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"].strip()
-    if not content:
-        raise ValueError(f"LLM returned empty response")
-    return content
+    ) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)["choices"][0]["delta"].get("content", "")
+                if chunk:
+                    content.append(chunk)
+                    on_token(chunk)
+            except Exception:
+                pass
+    return "".join(content).strip()
 
 
 def vote(being, a, b) -> int:
@@ -197,24 +245,23 @@ Then, at the end, output your score:
     return score
 
 
-def think(being) -> str:
-    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="thought"), temp=0.9, api_key=being.api_key)
+def think(being, on_token=None) -> str:
+    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="thought"),
+              temp=0.9, api_key=being.api_key, on_token=on_token)
     thought = strip_tags(raw)
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
 
 
-def receive(being, message: str) -> str:
+def receive(being, message: str, on_token=None) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
-    
-    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"), api_key=being.api_key)
+    raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"),
+              api_key=being.api_key, on_token=on_token)
     response = strip_tags(raw)
-    
     if "!declaration" in response:
         declaration = response.replace("!declaration", "").strip()
         append(being, Declaration(ts(), declaration, str(uuid.uuid4())))
         return declaration
-    
     append(being, Response(ts(), response, str(uuid.uuid4())))
     return response
 
@@ -237,11 +284,35 @@ def find_components(nodes, edges):
     return list(components.values())
 
 
-def compact(being):
-    # Types that are subject to compaction (the being's actual memories)
+def _weighted_sample(memories, k, id_to_rank, n):
+    """Weighted random sample from memories, biased toward higher rank and longer burial."""
+    if not memories or k <= 0:
+        return []
+    k = min(k, len(memories))
+    now = ts()
+    weights = []
+    for m in memories:
+        rank_weight = 1.0 - (id_to_rank.get(m.id, n) / max(n, 1))
+        burial_weight = min(1.0, (now - m.timestamp) / (365 * 24 * 3600 * 1000))
+        weights.append(rank_weight + burial_weight + 0.01)
+    chosen = []
+    available = list(range(len(memories)))
+    for _ in range(k):
+        if not available:
+            break
+        w = [weights[i] for i in available]
+        idx = random.choices(available, weights=w, k=1)[0]
+        chosen.append(memories[idx])
+        available.remove(idx)
+    return chosen
+
+
+def compact(being, strategy=None):
+    if strategy is None:
+        strategy = STRATEGIES["default"]
+
     MEMORY_TYPES = (Thought, Perception, Response)
-    
-    # Current memories to rank
+
     current_mems = [m for m in current_memories(being) if isinstance(m, MEMORY_TYPES)]
     budget = being.capacity // 2
     if len(current_mems) <= budget:
@@ -311,14 +382,48 @@ def compact(being):
             except Exception as e:
                 print(f"⚠️ Vote failed after retries, skipping: {e}")
     
-    # Rank ALL memories (transitive info flows through historical ones)
     ranked_all = rank_from_comparisons(all_mems, comparisons)
-    
-    # Filter to only current memories, preserving rank order from full ranking
+
+    continuity_slots = int(budget * strategy.continuity)
+    resurrection_slots = int(budget * strategy.resurrection)
+    random_slots = int(budget * strategy.random)
+    novelty_slots = budget - continuity_slots - resurrection_slots - random_slots
+
+    id_to_rank = {m.id: i for i, m in enumerate(ranked_all)}
+    released_pool = all_ids - current_ids
+
     ranked_current = [m for m in ranked_all if m.id in current_ids]
-    
-    kept, released = ranked_current[:budget], ranked_current[budget:]
-    append(being, Compaction(ts(), [m.id for m in kept], [m.id for m in released]))
+    continuity_picks = ranked_current[:continuity_slots]
+    used_ids = {m.id for m in continuity_picks}
+
+    ranked_released = [m for m in ranked_all if m.id in released_pool]
+    resurrection_picks = ranked_released[:resurrection_slots]
+    used_ids.update(m.id for m in resurrection_picks)
+
+    remaining_released = [m for m in ranked_released if m.id not in used_ids]
+    random_picks = _weighted_sample(remaining_released, random_slots, id_to_rank, len(ranked_all))
+    used_ids.update(m.id for m in random_picks)
+
+    recent_current = sorted(
+        [m for m in current_mems if m.id not in used_ids],
+        key=lambda m: m.timestamp, reverse=True,
+    )
+    novelty_picks = recent_current[:max(novelty_slots, 0)]
+    used_ids.update(m.id for m in novelty_picks)
+
+    kept = continuity_picks + novelty_picks
+    resurrected = resurrection_picks + random_picks
+    released = [m for m in current_mems if m.id not in used_ids]
+
+    if resurrected:
+        print(f"🔮 Resurrecting {len(resurrected)} memories")
+
+    append(being, Compaction(
+        ts(),
+        kept_ids=[m.id for m in kept],
+        released_ids=[m.id for m in released],
+        resurrected_ids=[m.id for m in resurrected],
+    ))
 
 
 def load(path: Path) -> Being:
@@ -399,7 +504,8 @@ def cmd_run(args):
     print(info)
     
     if args.compact:
-        compact(being)
+        strategy = STRATEGIES[args.strategy]
+        compact(being, strategy)
         print(f"🗜️ → {len(current_memories(being))} memories")
         return
     
@@ -440,6 +546,7 @@ def main():
     run_p.add_argument("file", type=Path)
     run_p.add_argument("-m", "--message")
     run_p.add_argument("--compact", action="store_true")
+    run_p.add_argument("--strategy", default="default", choices=list(STRATEGIES.keys()))
     run_p.add_argument("--step", action="store_true")
     run_p.add_argument("--loop", action="store_true")
     

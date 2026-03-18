@@ -448,3 +448,13 @@ button:disabled {
   }
 }
 
+
+.event.thinking {
+  opacity: 0.6;
+  font-style: italic;
+  padding: 4px 0;
+}
+.event.thinking .event-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

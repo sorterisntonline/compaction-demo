@@ -1,2 +1,2 @@
 #!/bin/bash
-python -m app.app "$@"
+python -m app.app beings/ "$@"
