@@ -18,9 +18,6 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
-# In-memory streaming state: being_file -> partial token content (None = idle)
-_streaming: dict[str, str] = {}
-
 # Events cache: being_file -> (mtime, rendered_event_list)
 _events_cache: dict[str, tuple[float, list]] = {}
 
@@ -141,19 +138,11 @@ def go(being_file: str, message: str = ''):
     from adam import load, receive, think
     being = load(BEINGS_DIR / f'{being_file}.jsonl')
 
-    _streaming[being_file] = ''
-
-    def on_token(chunk):
-        _streaming[being_file] = _streaming.get(being_file, '') + chunk
-
     def run():
-        try:
-            if message.strip():
-                receive(being, message, on_token=on_token)
-            else:
-                think(being, on_token=on_token)
-        finally:
-            _streaming.pop(being_file, None)
+        if message.strip():
+            receive(being, message)
+        else:
+            think(being)
 
     threading.Thread(target=run, daemon=True).start()
     return RedirectResponse(f'/{being_file}', status_code=303)
@@ -287,15 +276,6 @@ def render_events_div(being_file: str, mtime: float = 0.0) -> str:
         event_list = [render_event(e, i) for i, e in enumerate(events)]
         event_list.reverse()
         _events_cache[being_file] = (mtime, event_list)
-
-    partial = _streaming.get(being_file)
-    if partial is not None:
-        cursor = "▋" if len(partial) % 2 == 0 else " "
-        thinking = ["div.event.thinking",
-            ["span.event-type", "response "],
-            ["span.event-preview", partial[-200:] + cursor]
-        ]
-        event_list = [thinking] + event_list
 
     return render(["div#events.events", event_list])
 
@@ -471,21 +451,18 @@ async def sse_endpoint(being_file: str, request: Request):
 
     async def generate():
         last_mtime = 0.0
-        last_partial = None
         while True:
             if await request.is_disconnected():
                 break
             try:
                 mtime = path.stat().st_mtime if path.exists() else 0.0
-                partial = _streaming.get(being_file)
-                if mtime != last_mtime or partial != last_partial:
+                if mtime != last_mtime:
                     last_mtime = mtime
-                    last_partial = partial
                     html = render_events_div(being_file, mtime)
                     yield sse_event("#events", html)
             except Exception:
                 pass
-            await asyncio.sleep(0.15 if being_file in _streaming else 1.0)
+            await asyncio.sleep(1.0)
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache",

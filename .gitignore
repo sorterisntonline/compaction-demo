@@ -47,3 +47,6 @@ Thumbs.db
 adam/
 repomix-output.xml
 opus/
+tests/wally/.wally/
+tests/wally/.cpcache/
+tests/wally/.nrepl-port
