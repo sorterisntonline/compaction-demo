@@ -141,9 +141,7 @@ def append(being, event):
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
-def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = "",
-        on_token=None) -> str:
-    """Call the LLM. If on_token is provided, stream tokens calling on_token(chunk) as they arrive."""
+def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = "") -> str:
     key = api_key or API_KEY
     if not key:
         raise ValueError("No API key provided. Set OPENROUTER_API_KEY in .env or pass api_key to llm()")
@@ -152,44 +150,17 @@ def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = ""
                "messages": [{"role": "system", "content": system},
                              {"role": "user", "content": user}]}
 
-    if on_token is None:
-        r = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {key}"},
-            json=payload,
-            timeout=120.0,
-        )
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"].strip()
-        if not content:
-            raise ValueError("LLM returned empty response")
-        return content
-
-    # Streaming path
-    payload["stream"] = True
-    content = []
-    with httpx.stream(
-        "POST",
+    r = httpx.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
         json=payload,
         timeout=120.0,
-    ) as r:
-        r.raise_for_status()
-        for line in r.iter_lines():
-            if not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)["choices"][0]["delta"].get("content", "")
-                if chunk:
-                    content.append(chunk)
-                    on_token(chunk)
-            except Exception:
-                pass
-    return "".join(content).strip()
+    )
+    r.raise_for_status()
+    content = r.json()["choices"][0]["message"]["content"].strip()
+    if not content:
+        raise ValueError("LLM returned empty response")
+    return content
 
 
 def vote(being, a, b) -> int:
@@ -244,18 +215,18 @@ Then, at the end, output your score:
     return score
 
 
-def think(being, on_token=None) -> str:
+def think(being) -> str:
     raw = llm(being.model, system_prompt(being), build_prompt(being, tag="thought"),
-              temp=0.9, api_key=being.api_key, on_token=on_token)
+              temp=0.9, api_key=being.api_key)
     thought = strip_tags(raw)
     append(being, Thought(ts(), thought, str(uuid.uuid4())))
     return thought
 
 
-def receive(being, message: str, on_token=None) -> str:
+def receive(being, message: str) -> str:
     append(being, Perception(ts(), message, str(uuid.uuid4())))
     raw = llm(being.model, system_prompt(being), build_prompt(being, tag="response"),
-              api_key=being.api_key, on_token=on_token)
+              api_key=being.api_key)
     response = strip_tags(raw)
     if "!declaration" in response:
         declaration = response.replace("!declaration", "").strip()

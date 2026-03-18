@@ -497,3 +497,26 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.mem-link {
+  color: var(--text);
+  text-decoration: underline dotted;
+  font-size: 0.85em;
+  margin: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 20ch;
+  display: inline-block;
+  vertical-align: bottom;
+}
+.mem-link:hover { text-decoration: underline; }
+
+.compaction-section { margin: 4px 0; }
+.compaction-label {
+  font-weight: bold;
+  font-size: 0.85em;
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

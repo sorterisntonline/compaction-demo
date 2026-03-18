@@ -159,14 +159,11 @@ def compact_async(being_file: str, strategy: str = "default"):
     if not path.exists():
         return PlainTextResponse(f"Being {being_file} not found", status_code=404)
     being = load(path)
-    mems = [m for m in current_memories(being) if isinstance(m, (Thought, Perception, Response))]
-    budget = being.capacity // 2
-    if len(mems) <= budget:
+    if not being.declaration:
         return PlainTextResponse(
-            f"Already under budget ({len(mems)}/{budget}). No compaction needed.",
-            status_code=200,
+            f"No declaration. {being_file} must write !declaration before compaction.",
+            status_code=400,
         )
-
     strategy_obj = STRATEGIES.get(strategy, STRATEGIES["default"])
 
     def run():
@@ -288,11 +285,64 @@ def head(title: str) -> list:
 
 # === RENDER HELPERS ===
 
-def render_event(e: Event, i: int) -> list:
+def _mem_link(mid: str, memories: dict) -> list:
+    m = memories.get(mid)
+    preview = (m.content[:40] + "…") if m and getattr(m, 'content', '') else mid[:8]
+    return ["a", {"href": f"#evt-{mid}", "class": "mem-link"}, preview]
+
+
+def render_event(e: Event, i: int, memories: dict = None) -> list:
+    memories = memories or {}
     etype = type(e).__name__.lower()
+    eid = getattr(e, 'id', None)
+    attrs = {"id": f"evt-{eid}"} if eid else {}
+
+    if isinstance(e, Vote):
+        a_preferred = e.vote_score >= 0
+        winner = e.vote_a_id if a_preferred else e.vote_b_id
+        loser  = e.vote_b_id if a_preferred else e.vote_a_id
+        score_str = f"{e.vote_score:+d}"
+        preview = ["span",
+            _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
+            _mem_link(e.vote_b_id, memories),
+        ]
+        return ["details.event", attrs,
+            ["summary",
+                ["span.event-num", f"{i} "],
+                ["span.event-type", "vote "],
+                ["span.event-time", f"{ts_fmt(e.timestamp)} "],
+                preview,
+            ],
+            ["div.event-content", ["span.copy-btn", "⧉"], e.reasoning] if e.reasoning else None,
+        ]
+
+    if isinstance(e, Compaction):
+        def section(label, ids):
+            if not ids:
+                return None
+            return ["div.compaction-section",
+                ["span.compaction-label", label],
+                *[_mem_link(mid, memories) for mid in ids],
+            ]
+        summary_txt = (f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
+                       + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else ""))
+        return ["details.event", attrs,
+            ["summary",
+                ["span.event-num", f"{i} "],
+                ["span.event-type", "compaction "],
+                ["span.event-time", f"{ts_fmt(e.timestamp)} "],
+                ["span.event-preview", summary_txt],
+            ],
+            ["div.event-content",
+                section("kept", e.kept_ids),
+                section("released", e.released_ids),
+                section("resurrected", e.resurrected_ids),
+            ],
+        ]
+
     content = getattr(e, 'content', '') or ''
-    preview = content[:80] + "..." if len(content) > 80 else content
-    return ["details.event",
+    preview = content[:80] + "…" if len(content) > 80 else content
+    return ["details.event", attrs,
         ["summary",
             ["span.event-num", f"{i} "],
             ["span.event-type", f"{etype} "],
@@ -304,11 +354,11 @@ def render_event(e: Event, i: int) -> list:
 
 
 def render_events_div(being_file: str, mtime: float = 0.0) -> str:
-    # Only re-parse the file when mtime changes
     cached_mtime, event_list = _events_cache.get(being_file, (None, None))
     if cached_mtime != mtime or event_list is None:
         events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
-        event_list = [render_event(e, i) for i, e in enumerate(events)]
+        memories = {e.id: e for e in events if getattr(e, 'id', None)}
+        event_list = [render_event(e, i, memories) for i, e in enumerate(events)]
         event_list.reverse()
         _events_cache[being_file] = (mtime, event_list)
 
@@ -404,7 +454,8 @@ function applyPatch(e) {{
 es.addEventListener('app', applyPatch);
 """)
 
-    event_list = [render_event(e, i) for i, e in enumerate(events)]
+    memories = {e.id: e for e in events if getattr(e, 'id', None)}
+    event_list = [render_event(e, i, memories) for i, e in enumerate(events)]
     event_list.reverse()
 
     return render(["html", head(being_file), ["body",
