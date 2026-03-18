@@ -24,6 +24,26 @@ document.querySelector('form')?.addEventListener('submit', function() {
     localStorage.removeItem(storageKey);
 });
 
+// Lazy-load event bodies: when a <details class="event"> is first opened,
+// POST the signed snippet form and swap in the returned HTML fragment.
+document.addEventListener('toggle', async e => {
+    const d = e.target;
+    if (!d.matches('details.event') || !d.open || d.dataset.expanded) return;
+    const form = d.querySelector('form.expand-form');
+    if (!form) return;
+    d.dataset.expanded = '1';
+    try {
+        const resp = await fetch('/do', {
+            method: 'POST',
+            body: new URLSearchParams(new FormData(form)),
+        });
+        if (resp.ok && resp.status !== 204) {
+            const html = await resp.text();
+            if (html.trim()) form.outerHTML = html;
+        }
+    } catch (_) {}
+}, true); // capture phase — toggle doesn't bubble
+
 // Copy to clipboard
 document.addEventListener('click', async e => {
     if (!e.target.classList.contains('copy-btn')) return;
