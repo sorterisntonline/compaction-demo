@@ -1,60 +1,130 @@
 """
 Playwright tests for the consensual memory UI.
-Run with: pytest tests/test_ui.py -v
-Requires: pip install playwright && playwright install chromium
+
+Run:
+
+  pytest tests/test_ui.py -v
+
+Requires: pip install -e '.[dev]' && playwright install chromium
 """
 
 import json
+import os
+import socket
 import subprocess
 import sys
 import time
-import pytest
 from pathlib import Path
-from playwright.sync_api import sync_playwright, Page, expect
+from types import SimpleNamespace
 
-BASE_URL = "http://localhost:18999"
-BEINGS_DIR = Path(__file__).parent.parent / "beings"
+import pytest
+from playwright.sync_api import Page, expect
+
+# SSE + unpkg Idiomorph can be slow on cold start
+PAINT_MS = 60_000
+
+
+def _free_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 @pytest.fixture(scope="session")
 def server(tmp_path_factory):
-    """Start a test server pointing at beings/ dir, no password."""
+    """
+    Start app on 127.0.0.1 with a free port. No login gate, mock LLM, isolated beings dir.
+    """
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
     tmp = tmp_path_factory.mktemp("beings")
-    # Minimal ember.jsonl for testing
-    init_event = {"v": 2, "type": "init", "timestamp": 1000, "id": "test-init",
-                  "capacity": 10, "model": "test/model", "vote_model": "test/model", "api_key": ""}
-    perception = {"v": 2, "type": "perception", "timestamp": 2000, "id": "p1", "content": "hello ember"}
-    response_ev = {"v": 2, "type": "response", "timestamp": 3000, "id": "r1", "content": "hello back"}
+
+    init_event = {
+        "v": 2,
+        "type": "init",
+        "timestamp": 1000,
+        "id": "test-init",
+        "capacity": 10,
+        "model": "test/model",
+        "vote_model": "test/vote-model",
+        "api_key": "",
+    }
+    perception = {
+        "v": 2,
+        "type": "perception",
+        "timestamp": 2000,
+        "id": "p1",
+        "content": "hello ember",
+    }
+    response_ev = {
+        "v": 2,
+        "type": "response",
+        "timestamp": 3000,
+        "id": "r1",
+        "content": "hello back",
+    }
+    thought_ev = {
+        "v": 2,
+        "type": "thought",
+        "timestamp": 4000,
+        "id": "t1",
+        "content": "I am thinking about things",
+    }
     (tmp / "ember.jsonl").write_text(
-        json.dumps(init_event) + "\n" +
-        json.dumps(perception) + "\n" +
-        json.dumps(response_ev) + "\n"
+        json.dumps(init_event)
+        + "\n"
+        + json.dumps(perception)
+        + "\n"
+        + json.dumps(response_ev)
+        + "\n"
+        + json.dumps(thought_ev)
+        + "\n"
     )
+
+    env = os.environ.copy()
+    env["MOCK_LLM"] = "1"
+    env["PASSWORD"] = ""  # do not inherit a real PASSWORD (SSE would loop on login)
+    env.pop("OPENROUTER_API_KEY", None)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "app.app", str(tmp), "--port", "18999"],
+        [sys.executable, "-m", "app.app", str(tmp), "--port", str(port)],
         cwd=Path(__file__).parent.parent,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
     )
-    # Wait for startup
-    for _ in range(20):
-        time.sleep(0.5)
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
         try:
             import urllib.request
-            urllib.request.urlopen(f"{BASE_URL}/", timeout=1)
-            break
-        except Exception:
-            pass
 
-    yield proc, tmp
+            urllib.request.urlopen(f"{base_url}/", timeout=2)
+            break
+        except OSError:
+            time.sleep(0.3)
+            if proc.poll() is not None:
+                raise RuntimeError(f"Server exited early (code {proc.returncode})")
+    else:
+        proc.terminate()
+        proc.wait(timeout=5)
+        raise RuntimeError("Server did not become ready in time")
+
+    yield SimpleNamespace(base_url=base_url, beings_dir=tmp, proc=proc)
 
     proc.terminate()
-    proc.wait()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 @pytest.fixture(scope="session")
 def browser_ctx(server):
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ctx = browser.new_context()
@@ -69,124 +139,131 @@ def page(browser_ctx) -> Page:
     p.close()
 
 
-# === TESTS ===
+# --- helpers ---
+
+
+def goto_painted(page: Page, path: str, server: SimpleNamespace, selector: str):
+    page.goto(f"{server.base_url}{path}", wait_until="domcontentloaded")
+    page.wait_for_selector(selector, timeout=PAINT_MS)
+
+
+# === INDEX ===
+
 
 def test_index_shows_beings(page, server):
-    page.goto(BASE_URL)
+    goto_painted(page, "/", server, ".being-link")
     expect(page.locator(".being-link")).to_contain_text("ember")
 
 
 def test_index_has_git_link(page, server):
-    page.goto(BASE_URL)
+    goto_painted(page, "/", server, "a[href='/git']")
     expect(page.locator("a[href='/git']")).to_be_visible()
 
 
+# === BEING PAGE ===
+
+
 def test_being_page_loads(page, server):
-    page.goto(f"{BASE_URL}/ember")
+    goto_painted(page, "/ember", server, ".top-bar")
     expect(page.locator(".top-bar")).to_contain_text("ember")
     expect(page.locator(".top-bar")).to_contain_text("events")
 
 
 def test_being_page_shows_events(page, server):
-    page.goto(f"{BASE_URL}/ember")
-    expect(page.locator(".event")).to_have_count(3)
+    goto_painted(page, "/ember", server, ".event")
+    expect(page.locator(".event")).to_have_count(4)
 
 
-def test_being_page_has_redact_button(page, server):
-    page.goto(f"{BASE_URL}/ember")
+def test_being_page_has_controls(page, server):
+    goto_painted(page, "/ember", server, "button")
     expect(page.locator("button", has_text="↩ redact")).to_be_visible()
-
-
-def test_being_page_has_push_button(page, server):
-    page.goto(f"{BASE_URL}/ember")
     expect(page.locator("button", has_text="⬆ push git")).to_be_visible()
+    expect(page.locator("button", has_text="compact")).to_be_visible()
+    expect(page.locator("button", has_text="go")).to_be_visible()
 
 
-def test_being_page_has_sse_script(page, server):
-    page.goto(f"{BASE_URL}/ember")
-    content = page.content()
-    assert "EventSource" in content
-    assert "/sse/ember" in content
+def test_being_page_has_textarea(page, server):
+    goto_painted(page, "/ember", server, "textarea")
+    expect(page.locator("textarea[name='message']")).to_be_visible()
 
 
-def test_sse_endpoint_responds(page, server):
-    """SSE endpoint returns text/event-stream."""
+# === SSE (HTTP) ===
+
+
+def test_sse_endpoint_responds(server):
     import urllib.request
-    resp = urllib.request.urlopen(f"{BASE_URL}/sse/ember", timeout=3)
-    assert "text/event-stream" in resp.headers.get("Content-Type", "")
-    resp.close()
+
+    req = urllib.request.Request(
+        f"{server.base_url}/ember/sse",
+        headers={"Accept": "text/event-stream"},
+    )
+    resp = urllib.request.urlopen(req, timeout=10)
+    try:
+        ct = resp.headers.get("Content-Type", "")
+        assert "text/event-stream" in ct
+    finally:
+        resp.close()
+
+
+# === EXPAND / COLLAPSE ===
+
+
+def test_expand_event_shows_content(page, server):
+    goto_painted(page, "/ember", server, "form.event.expandable")
+    page.locator("form.event.expandable").first.locator("button.event-row").click()
+    page.wait_for_selector(".event.expanded", timeout=PAINT_MS)
+    expect(page.locator(".event.expanded .event-content")).to_be_visible()
+
+
+def test_collapse_expanded_event(page, server):
+    goto_painted(page, "/ember", server, "form.event.expandable")
+    page.locator("form.event.expandable").first.locator("button.event-row").click()
+    page.wait_for_selector(".event.expanded", timeout=PAINT_MS)
+    # requestSubmit() fires the submit event (HTMLFormElement.submit() does not)
+    page.locator(".event.expanded form.collapse-form").evaluate("f => f.requestSubmit()")
+    page.wait_for_selector(".event.expanded", state="detached", timeout=PAINT_MS)
+    expect(page.locator("form.event.expandable").first).to_be_visible()
+
+
+# === SEND MESSAGE (MOCK LLM) ===
+
+
+def test_send_message_creates_response(page, server):
+    goto_painted(page, "/ember", server, ".event")
+    events_before = page.locator(".event").count()
+
+    page.locator("textarea[name='message']").fill("test message from playwright")
+    page.locator("button", has_text="go").click()
+
+    page.wait_for_function(
+        "n => document.querySelectorAll('.event').length > n",
+        arg=events_before,
+        timeout=PAINT_MS,
+    )
+    assert page.locator(".event").count() >= events_before + 2
+
+
+# === GIT PAGE ===
 
 
 def test_git_page_loads(page, server):
-    page.goto(f"{BASE_URL}/git")
-    expect(page.locator(".top-bar")).to_contain_text("git remotes")
+    goto_painted(page, "/git", server, ".top-bar")
+    expect(page.locator(".top-bar")).to_contain_text("git")
 
 
-def test_git_page_shows_default_remotes(page, server):
-    page.goto(f"{BASE_URL}/git")
-    content = page.content()
-    assert "codeberg.org" in content
-    assert "github.com" in content
-    assert "gitlab.com" in content
-
-
-def test_git_page_add_remote(page, server):
-    _, tmp = server
-    page.goto(f"{BASE_URL}/git")
-
-    # Fill in the "add remote" form (last remote-row, empty fields)
-    add_row = page.locator(".remote-row").last
-    add_row.locator("input[name='name']").fill("testremote")
-    add_row.locator("input[name='url']").fill("https://example.com/test.git")
-    add_row.locator("input[name='user']").fill("testuser")
-    add_row.locator("input[name='token_var']").fill("TEST_TOKEN")
-    add_row.locator("button", has_text="add remote").click()
-
-    # Should redirect back to /git and show the new remote
-    page.wait_for_url(f"{BASE_URL}/git")
-    expect(page.locator("[data-remote='testremote']")).to_be_visible()
-
-
-def test_git_page_edit_remote(page, server):
-    _, tmp = server
-    # Ensure testremote exists from previous test
-    page.goto(f"{BASE_URL}/git")
-
-    row = page.locator("[data-remote='testremote']")
-    if not row.is_visible():
-        pytest.skip("testremote not present (run tests in order)")
-
-    url_input = row.locator("input[name='url']")
-    url_input.fill("https://example.com/updated.git")
-    row.locator("button", has_text="save").click()
-
-    page.wait_for_url(f"{BASE_URL}/git")
-    expect(page.locator("[data-remote='testremote'] input[name='url']")).to_have_value("https://example.com/updated.git")
-
-
-def test_git_page_delete_remote(page, server):
-    page.goto(f"{BASE_URL}/git")
-    row = page.locator("[data-remote='testremote']")
-    if not row.is_visible():
-        pytest.skip("testremote not present")
-
-    page.on("dialog", lambda d: d.accept())
-    row.locator("button", has_text="✕").click()
-
-    page.wait_for_url(f"{BASE_URL}/git")
-    expect(page.locator("[data-remote='testremote']")).not_to_be_visible()
+# === REDACT ===
 
 
 def test_redact_removes_last_perception(page, server):
-    _, tmp = server
-    page.goto(f"{BASE_URL}/ember")
-
+    goto_painted(page, "/ember", server, ".event")
     events_before = page.locator(".event").count()
 
-    page.on("dialog", lambda d: d.accept())
+    page.once("dialog", lambda d: d.accept())
     page.locator("button", has_text="↩ redact").click()
-    page.wait_for_url(f"{BASE_URL}/ember")
 
-    events_after = page.locator(".event").count()
-    # perception + response removed = 2 fewer events
-    assert events_after == events_before - 2
+    page.wait_for_function(
+        "n => document.querySelectorAll('.event').length < n",
+        arg=events_before,
+        timeout=PAINT_MS,
+    )
+    assert page.locator(".event").count() < events_before

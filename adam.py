@@ -97,6 +97,8 @@ def apply_event(being, event):
 
 
 def system_prompt(being):
+    if MOCK_LLM:
+        return "You are a being with finite memory."
     codebase = ROOT / "repomix-output.xml"
     if not codebase.exists():
         raise FileNotFoundError("Run 'npx repomix' first")
@@ -140,8 +142,15 @@ def append(being, event):
     apply_event(being, event)
 
 
+MOCK_LLM = os.getenv("MOCK_LLM", "")
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def llm(model: str, system: str, user: str, temp: float = 0.7, api_key: str = "") -> str:
+    if MOCK_LLM:
+        tag = "thought" if "<thought>" in user else "response"
+        return f"mock {tag} reply"
+
     key = api_key or API_KEY
     if not key:
         raise ValueError("No API key provided. Set OPENROUTER_API_KEY in .env or pass api_key to llm()")
