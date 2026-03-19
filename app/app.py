@@ -23,8 +23,13 @@ _events_cache: dict[str, tuple[float, list]] = {}
 
 # Compaction progress: being_file -> {current, total, phase} or None when done
 _compaction_progress: dict[str, dict | None] = {}
-# Pending per-event SSE patches from expand_event/collapse_event: being_file -> [(selector, html)]
-_event_body_patches: dict[str, list] = {}
+# Pending exec JS strings to push over SSE: being_file -> [js, ...]
+_exec_queue: dict[str, list] = {}
+
+
+def broadcast_exec(being_file: str, *js_strings: str):
+    q = _exec_queue.setdefault(being_file, [])
+    q.extend(js_strings)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
@@ -32,7 +37,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.hiccup import render, RawContent
 from app.state import get_app_state
-from app.patch import Two, Three, Selector, MORPH
+from app.patch import Two, Three, Selector, Eval, MORPH, REMOVE
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 ROOT = Path(__file__).parent.parent
@@ -378,17 +383,59 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
     ]
 
 
+def render_event_expanded(e: Event, i: int, memories: dict = None) -> list:
+    """Full event render with body inline — used when morphing after lazy expand."""
+    memories = memories or {}
+    etype = type(e).__name__.lower()
+    eid = getattr(e, 'id', None)
+    attrs = {"data-idx": str(i), "open": ""}
+    if eid:
+        attrs["id"] = f"evt-{eid}"
+
+    match e:
+        case Vote():
+            score_str = f"{e.vote_score:+d}"
+            summary_body = ["span",
+                _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
+                _mem_link(e.vote_b_id, memories),
+            ]
+        case Compaction():
+            summary_body = ["span.event-preview",
+                f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
+                + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else "")]
+        case _:
+            content = getattr(e, 'content', '') or ''
+            summary_body = ["span.event-preview", content[:80] + ("…" if len(content) > 80 else "")]
+
+    body = _event_body_html(e, memories)
+    return ["details.event", attrs,
+        ["summary",
+            ["span.event-num", f"{i} "],
+            ["span.event-type", f"{etype} "],
+            ["span.event-time", f"{ts_fmt(e.timestamp)} "],
+            summary_body,
+        ],
+        body,
+    ]
+
+
 def event_body(being_file: str, idx: int):
-    """/do snippet target: returns the body HTML fragment for a single event."""
+    """/do snippet target: pushes event body via SSE exec, returns 204."""
     events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
     e = events[idx]
+    eid = getattr(e, 'id', None)
+    if not eid:
+        return PlainTextResponse("", status_code=204)
     memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
     body = _event_body_html(e, memories)
     if body is None:
         return PlainTextResponse("", status_code=204)
-    return HTMLResponse(render(body))
+    broadcast_exec(being_file,
+        Three[Selector(f"#evt-{eid}")][MORPH][render_event_expanded(e, idx, memories)],
+    )
+    return PlainTextResponse("", status_code=204)
 
 
 def render_events_div(being_file: str, mtime: float = 0.0) -> str:
@@ -616,6 +663,9 @@ async def sse_endpoint(being_file: str, request: Request):
                         bar_html = render(["div#compaction-progress.compaction-progress"])
                     yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar_html])
 
+                queue = _exec_queue.pop(being_file, [])
+                for js in queue:
+                    yield exec_event(js)
 
             except Exception:
                 pass

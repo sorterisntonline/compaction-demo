@@ -29,7 +29,7 @@ def _resolve(items):
         elif isinstance(item, Eval):   code     = item.code
         else:                          data     = item
 
-    sel_js = f"document.querySelector('{selector}')" if selector else "null"
+    sel_js = f'document.querySelector("{selector}")' if selector else "null"
 
     if code:
         if code.startswith("=>"):
