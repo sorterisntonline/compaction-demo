@@ -504,6 +504,14 @@ def render_progress_bar(current: int, total: int, phase: str) -> list:
 
 # === EXECUTE: SSE generator runs commands directly ===
 
+def _go_form(being_file: str) -> list:
+    return ["form", {"action": "/do", "method": "post", "class": "go-form"},
+        *snippet_hidden(f"go('{being_file}', $message)"),
+        ["textarea", {"name": "message", "rows": "8"}],
+        ["button", {"type": "submit"}, "go"],
+    ]
+
+
 async def execute(being, being_file: str, cmd):
     from adam import think, receive, compact
 
@@ -514,7 +522,6 @@ async def execute(being, being_file: str, cmd):
                 idx = len(being.events) - 1
                 rendered = render_event(event, idx, memories, being_file)
                 yield exec_event(Three[Selector("#events")][PREPEND][rendered])
-            yield exec_event(str(Four[Selector('form.go-form button[type="submit"]')][CLASSES][REMOVE]['sending']))
 
         case ("receive", msg):
             async for event in receive(being, msg):
@@ -522,7 +529,6 @@ async def execute(being, being_file: str, cmd):
                 idx = len(being.events) - 1
                 rendered = render_event(event, idx, memories, being_file)
                 yield exec_event(Three[Selector("#events")][PREPEND][rendered])
-            yield exec_event(str(Four[Selector('form.go-form button[type="submit"]')][CLASSES][REMOVE]['sending']))
 
         case ("compact", strategy_name):
             strategy = STRATEGIES.get(strategy_name, STRATEGIES["default"])
@@ -535,8 +541,10 @@ async def execute(being, being_file: str, cmd):
                     idx = len(being.events) - 1
                     rendered = render_event(item, idx, memories, being_file)
                     yield exec_event(Three[Selector("#events")][PREPEND][rendered])
-            # Clear progress bar
             yield exec_event(Three[Selector("#compaction-progress")][MORPH][["div#compaction-progress.compaction-progress"]])
+
+    # Fresh go form with new nonce + remove sending state
+    yield exec_event(Three[Selector("form.go-form")][MORPH][_go_form(being_file)])
 
 
 # === CONTENT BUILDERS (body only, for SSE push) ===
@@ -583,11 +591,7 @@ def being_content(being_file: str) -> list:
         f"{being_file} ({model}): {len(events)} events, {mem_count} memories, {vote_count} votes"
     ]
 
-    form = ["form", {"action": "/do", "method": "post", "class": "go-form"},
-        *snippet_hidden(f"go('{being_file}', $message)"),
-        ["textarea", {"name": "message", "rows": "8"}],
-        ["button", {"type": "submit"}, "go"],
-    ]
+    form = _go_form(being_file)
 
     redact_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
         *snippet_hidden(f"redact('{being_file}')"),
