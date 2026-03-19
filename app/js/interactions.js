@@ -24,8 +24,8 @@ document.querySelector('form')?.addEventListener('submit', function() {
     localStorage.removeItem(storageKey);
 });
 
-// Lazy-load event bodies: when a <details class="event"> is first opened,
-// POST the signed snippet form and swap in the returned HTML fragment.
+// Lazy-load event bodies: on first open, POST the hidden expand-form to /do;
+// event_body() returns the body HTML fragment which we append to <details>.
 document.addEventListener('toggle', async e => {
     const d = e.target;
     if (!d.matches('details.event') || !d.open || d.dataset.expanded) return;
@@ -33,13 +33,16 @@ document.addEventListener('toggle', async e => {
     if (!form) return;
     d.dataset.expanded = '1';
     try {
-        const resp = await fetch('/do', {
+        const r = await fetch('/do', {
             method: 'POST',
             body: new URLSearchParams(new FormData(form)),
         });
-        if (resp.ok && resp.status !== 204) {
-            const html = await resp.text();
-            if (html.trim()) form.outerHTML = html;
+        if (r.ok && r.status !== 204) {
+            const body = await r.text();
+            if (body.trim()) {
+                form.remove();
+                d.insertAdjacentHTML('beforeend', body);
+            }
         }
     } catch (_) {}
 }, true); // capture phase — toggle doesn't bubble

@@ -71,10 +71,17 @@ CSS_HASH = get_css_hash()
 SECRET = hashlib.sha256(f"snippets-{uuid.uuid4()}".encode()).digest()
 _nonces: dict[str, float] = {}
 NONCE_TTL = 3600
+_last_nonce_clean: float = 0.0
 
 
 def _clean_nonces():
+    # Rate-limit the scan to once per minute — calling this inside generate_nonce()
+    # was O(|_nonces|) per call, making a page with thousands of events O(n²).
+    global _last_nonce_clean
     now = time.time()
+    if now - _last_nonce_clean < 60:
+        return
+    _last_nonce_clean = now
     for n in [n for n, exp in _nonces.items() if exp < now]:
         del _nonces[n]
 
@@ -298,82 +305,64 @@ def _mem_link(mid: str, memories: dict) -> list:
     return ["a", {"href": f"#evt-{mid}", "class": "mem-link"}, label]
 
 
-def _expand_form(being_file: str, i: int) -> list:
-    """Hidden form whose signed snippet returns the event body when fetched."""
-    return ["form.expand-form", {"action": "/do", "method": "post"},
-        *snippet_hidden(f"event_body('{being_file}', {i})"),
-    ]
-
-
 def _event_body_html(e: Event, memories: dict) -> list | None:
     """Renders just the expandable body for an event (no <details> wrapper)."""
-    if isinstance(e, Vote):
-        if not e.reasoning:
-            return None
-        return ["div.event-content", ["span.copy-btn", "⧉"], e.reasoning]
+    match e:
+        case Vote(reasoning=r) if r:
+            return ["div.event-content", ["span.copy-btn", "⧉"], r]
 
-    if isinstance(e, Compaction):
-        def sorted_ids(ids):
-            return sorted(ids, key=lambda mid: memories[mid][0] if mid in memories else 9999)
-        def section(label, ids):
-            if not ids:
-                return None
-            return ["div.compaction-section",
-                ["span.compaction-label", label],
-                *[_mem_link(mid, memories) for mid in sorted_ids(ids)],
+        case Compaction():
+            def sorted_ids(ids):
+                return sorted(ids, key=lambda mid: memories[mid][0] if mid in memories else 9999)
+            def section(label, ids):
+                if not ids:
+                    return None
+                return ["div.compaction-section",
+                    ["span.compaction-label", label],
+                    *[_mem_link(mid, memories) for mid in sorted_ids(ids)],
+                ]
+            return ["div.event-content",
+                section("kept", e.kept_ids),
+                section("released", e.released_ids),
+                section("resurrected", e.resurrected_ids),
             ]
-        return ["div.event-content",
-            section("kept", e.kept_ids),
-            section("released", e.released_ids),
-            section("resurrected", e.resurrected_ids),
-        ]
 
-    content = getattr(e, 'content', '') or ''
-    if not content:
-        return None
-    return ["div.event-content", ["span.copy-btn", "⧉"], content]
+        case _ if (content := getattr(e, 'content', '') or ''):
+            return ["div.event-content", ["span.copy-btn", "⧉"], content]
 
-
-def event_body(being_file: str, idx: int):
-    """Signed-snippet target: returns the event body HTML fragment for lazy loading."""
-    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
-    if idx < 0 or idx >= len(events):
-        return PlainTextResponse("", status_code=404)
-    e = events[idx]
-    memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
-    body = _event_body_html(e, memories)
-    if body is None:
-        return PlainTextResponse("", status_code=204)
-    return HTMLResponse(render(body))
+        case _:
+            return None
 
 
 def render_event(e: Event, i: int, memories: dict = None, being_file: str = None) -> list:
-    """Compact initial render — body loads lazily via expand-form on first open."""
+    """Compact summary-only initial render.  Body loads lazily: the hidden expand
+    form posts via fetch to /do; event_body() returns the HTML fragment directly."""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
-    attrs = {"id": f"evt-{eid}"} if eid else {}
 
-    # Determine compact summary content
-    if isinstance(e, Vote):
-        score_str = f"{e.vote_score:+d}"
-        summary_body = ["span",
-            _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
-            _mem_link(e.vote_b_id, memories),
-        ]
-        has_body = bool(e.reasoning)
-    elif isinstance(e, Compaction):
-        summary_body = ["span.event-preview",
-            f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
-            + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else "")]
-        has_body = bool(e.kept_ids or e.released_ids or e.resurrected_ids)
-    else:
-        content = getattr(e, 'content', '') or ''
-        preview = content[:80] + "…" if len(content) > 80 else content
-        summary_body = ["span.event-preview", preview]
-        has_body = bool(content)
+    attrs = {"data-idx": str(i)}
+    if eid:
+        attrs["id"] = f"evt-{eid}"
 
-    expand = _expand_form(being_file, i) if (has_body and being_file) else None
+    match e:
+        case Vote():
+            score_str = f"{e.vote_score:+d}"
+            summary_body = ["span",
+                _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
+                _mem_link(e.vote_b_id, memories),
+            ]
+        case Compaction():
+            summary_body = ["span.event-preview",
+                f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
+                + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else "")]
+        case _:
+            content = getattr(e, 'content', '') or ''
+            summary_body = ["span.event-preview", content[:80] + ("…" if len(content) > 80 else "")]
+
+    has_body = _event_body_html(e, memories) is not None
+    expand = (["form.expand-form", {"action": "/do", "method": "post"},
+                   *snippet_hidden(f"event_body('{being_file}', {i})")] if has_body and being_file else None)
 
     return ["details.event", attrs,
         ["summary",
@@ -384,6 +373,19 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
         ],
         expand,
     ]
+
+
+def event_body(being_file: str, idx: int):
+    """/do snippet target: returns the body HTML fragment for a single event."""
+    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    if idx < 0 or idx >= len(events):
+        return PlainTextResponse("", status_code=404)
+    e = events[idx]
+    memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
+    body = _event_body_html(e, memories)
+    if body is None:
+        return PlainTextResponse("", status_code=204)
+    return HTMLResponse(render(body))
 
 
 def render_events_div(being_file: str, mtime: float = 0.0) -> str:
@@ -436,7 +438,10 @@ def index_page() -> str:
 
 
 def being_page(being_file: str) -> str:
-    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+    events = load_events(path)
+    mtime = path.stat().st_mtime if path.exists() else 0.0
+
     init = next((e for e in events if isinstance(e, Init)), None)
     model = init.model if init else "?"
 
@@ -477,6 +482,7 @@ def being_page(being_file: str) -> str:
 
     poem_js = RawContent(f"""
 import {{ Idiomorph }} from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
+window.Idiomorph = Idiomorph;
 const es = new EventSource('/sse/{being_file}');
 function applyPatch(e) {{
   const [sel, ...rest] = e.data.split('\\n');
@@ -487,9 +493,8 @@ function applyPatch(e) {{
 es.addEventListener('app', applyPatch);
 """)
 
-    memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
-    event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(events)]
-    event_list.reverse()
+    # Share cache with SSE — nonces generated once per mtime, not twice
+    events_div = RawContent(render_events_div(being_file, mtime))
 
     return render(["html", head(being_file), ["body",
         top,
@@ -498,7 +503,7 @@ es.addEventListener('app', applyPatch);
         form,
         ["script", RawContent(load_script("interactions.js"))],
         ["script", {"type": "module"}, poem_js],
-        ["div#events.events", event_list]
+        events_div,
     ]])
 
 
@@ -613,6 +618,8 @@ async def sse_endpoint(being_file: str, request: Request):
                         yield sse_event("#compaction-progress", bar_html)
                     else:
                         yield sse_event("#compaction-progress", render(["div#compaction-progress.compaction-progress"]))
+
+
             except Exception:
                 pass
             await asyncio.sleep(0.15 if being_file in _compaction_progress else 1.0)
@@ -621,6 +628,7 @@ async def sse_endpoint(being_file: str, request: Request):
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     })
+
 
 
 @app.get("/{being_file}", response_class=HTMLResponse)
