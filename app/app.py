@@ -21,7 +21,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from app.state import get_app_state, get_being, evict_being
-from app.patch import One, Three, Selector, Eval, MORPH, PREPEND
+from app.patch import One, Three, Four, Selector, Eval, MORPH, PREPEND, CLASSES, ADD, REMOVE
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 from adam import Progress, STRATEGIES
 
@@ -57,39 +57,18 @@ import { Idiomorph } from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.
 window.Idiomorph = Idiomorph;
 const ssePath = (location.pathname || '/').replace(/\\/$/, '') + '/sse';
 const es = new EventSource(ssePath);
-let awaitingGoExec = false;
-let goLoadingTimer = null;
-function clearGoLoading() {
-  awaitingGoExec = false;
-  if (goLoadingTimer) {
-    clearTimeout(goLoadingTimer);
-    goLoadingTimer = null;
-  }
-  document.querySelector('form.go-form button[type="submit"]')?.classList.remove('sending');
-}
 es.addEventListener('exec', e => {
-  if (awaitingGoExec) clearGoLoading();
   eval(e.data);
 });
 document.addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
-  const submitBtn = f.querySelector('button[type="submit"]');
-  const isGo = f.classList.contains('go-form');
-  if (isGo && submitBtn) {
-    submitBtn.classList.add('sending');
-    awaitingGoExec = true;
-    goLoadingTimer = setTimeout(() => {
-      if (awaitingGoExec) clearGoLoading();
-    }, 300000);
-  }
   try {
     const r = await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
     const t = await r.text();
-    if (!r.ok && isGo) clearGoLoading();
     if (t) eval(t);
   } catch (err) {
-    if (isGo) clearGoLoading();
+    console.error(err);
   }
   if (f.dataset.reset !== 'false') f.reset();
 });
@@ -207,7 +186,8 @@ def go(being_file: str, message: str = ''):
         being.commands.put_nowait(("receive", message))
     else:
         being.commands.put_nowait(("think",))
-    return PlainTextResponse("", status_code=204)
+    js = Four[Selector('form.go-form button[type="submit"]')][CLASSES][ADD]['sending']
+    return PlainTextResponse(str(js), status_code=200)
 
 
 def copy_to_clipboard(being_file: str, idx: int):
@@ -534,6 +514,7 @@ async def execute(being, being_file: str, cmd):
                 idx = len(being.events) - 1
                 rendered = render_event(event, idx, memories, being_file)
                 yield exec_event(Three[Selector("#events")][PREPEND][rendered])
+            yield exec_event(str(Four[Selector('form.go-form button[type="submit"]')][CLASSES][REMOVE]['sending']))
 
         case ("receive", msg):
             async for event in receive(being, msg):
@@ -541,6 +522,7 @@ async def execute(being, being_file: str, cmd):
                 idx = len(being.events) - 1
                 rendered = render_event(event, idx, memories, being_file)
                 yield exec_event(Three[Selector("#events")][PREPEND][rendered])
+            yield exec_event(str(Four[Selector('form.go-form button[type="submit"]')][CLASSES][REMOVE]['sending']))
 
         case ("compact", strategy_name):
             strategy = STRATEGIES.get(strategy_name, STRATEGIES["default"])

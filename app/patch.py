@@ -15,17 +15,20 @@ PREPEND = Action("PREPEND")
 APPEND  = Action("APPEND")
 REMOVE  = Action("REMOVE")
 OUTER   = Action("OUTER")
+CLASSES = Action("CLASSES")
+ADD     = Action("ADD")
+TOGGLE  = Action("TOGGLE")
 
 
 def _resolve(items):
     selector = None
-    action   = None
+    actions  = []
     code     = None
     data     = None
 
     for item in items:
         if isinstance(item, Selector): selector = item.query
-        elif isinstance(item, Action): action   = item
+        elif isinstance(item, Action): actions.append(item)
         elif isinstance(item, Eval):   code     = item.code
         else:                          data     = item
 
@@ -46,6 +49,16 @@ def _resolve(items):
         raw = render(data) if not isinstance(data, str) else data
         html = raw.replace("`", "\\`").replace("${", "\\${")
 
+    if CLASSES in actions:
+        if REMOVE in actions:
+            return f"{sel_js}?.classList.remove('{data}')"
+        if ADD in actions:
+            return f"{sel_js}?.classList.add('{data}')"
+        if TOGGLE in actions:
+            return f"{sel_js}?.classList.toggle('{data}')"
+
+    action = actions[0] if actions else None
+
     if action == MORPH:
         return f"Idiomorph.morph({sel_js}, `{html}`)"
     if action == PREPEND:
@@ -53,7 +66,7 @@ def _resolve(items):
     if action == APPEND:
         return f"{sel_js}.insertAdjacentHTML('beforeend', `{html}`)"
     if action == REMOVE:
-        return f"{sel_js}.remove()"
+        return f"{sel_js}?.remove()"
     if action == OUTER:
         return f"{sel_js}.outerHTML = `{html}`"
 
