@@ -23,6 +23,8 @@ _events_cache: dict[str, tuple[float, list]] = {}
 
 # Compaction progress: being_file -> {current, total, phase} or None when done
 _compaction_progress: dict[str, dict | None] = {}
+# Pending per-event SSE patches from expand_event/collapse_event: being_file -> [(selector, html)]
+_event_body_patches: dict[str, list] = {}
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
@@ -30,6 +32,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.hiccup import render, RawContent
 from app.state import get_app_state
+from app.patch import Two, Three, Selector, MORPH
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 ROOT = Path(__file__).parent.parent
@@ -400,9 +403,9 @@ def render_events_div(being_file: str, mtime: float = 0.0) -> str:
     return render(["div#events.events", event_list])
 
 
-def sse_event(selector: str, html: str) -> str:
-    lines = ["event: app", f"data: {selector}"]
-    for line in html.split('\n'):
+def exec_event(js: str) -> str:
+    lines = ["event: exec"]
+    for line in js.split('\n'):
         lines.append(f"data: {line}")
     lines += ["", ""]
     return "\n".join(lines)
@@ -484,13 +487,7 @@ def being_page(being_file: str) -> str:
 import {{ Idiomorph }} from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
 window.Idiomorph = Idiomorph;
 const es = new EventSource('/sse/{being_file}');
-function applyPatch(e) {{
-  const [sel, ...rest] = e.data.split('\\n');
-  const el = document.querySelector(sel);
-  if (!el) return;
-  Idiomorph.morph(el, rest.join('\\n'));
-}}
-es.addEventListener('app', applyPatch);
+es.addEventListener('exec', e => eval(e.data));
 """)
 
     # Share cache with SSE — nonces generated once per mtime, not twice
@@ -606,7 +603,7 @@ async def sse_endpoint(being_file: str, request: Request):
                 if mtime != last_mtime:
                     last_mtime = mtime
                     html = render_events_div(being_file, mtime)
-                    yield sse_event("#events", html)
+                    yield exec_event(Three[Selector("#events")][MORPH][html])
 
                 progress = _compaction_progress.get(being_file)
                 if progress != last_progress:
@@ -615,9 +612,9 @@ async def sse_endpoint(being_file: str, request: Request):
                         bar_html = render_progress_bar(
                             progress["current"], progress["total"], progress["phase"]
                         )
-                        yield sse_event("#compaction-progress", bar_html)
                     else:
-                        yield sse_event("#compaction-progress", render(["div#compaction-progress.compaction-progress"]))
+                        bar_html = render(["div#compaction-progress.compaction-progress"])
+                    yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar_html])
 
 
             except Exception:
