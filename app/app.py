@@ -20,13 +20,6 @@ from datetime import datetime
 
 # Compaction progress: being_file -> {current, total, phase} or None when done
 _compaction_progress: dict[str, dict | None] = {}
-# Pending exec JS strings to push over SSE: being_file -> [js, ...]
-_exec_queue: dict[str, list] = {}
-
-
-def broadcast_exec(being_file: str, *js_strings: str):
-    q = _exec_queue.setdefault(being_file, [])
-    q.extend(js_strings)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
@@ -71,7 +64,9 @@ es.addEventListener('exec', e => eval(e.data));
 document.addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
-  await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+  const r = await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+  const t = await r.text();
+  if (t) eval(t);
   if (f.dataset.reset !== 'false') f.reset();
 });
 </script>
@@ -362,9 +357,31 @@ def _event_body_html(e: Event, memories: dict) -> list | None:
             return None
 
 
+def _event_summary(e: Event, i: int, etype: str, memories: dict) -> list:
+    match e:
+        case Vote():
+            score_str = f"{e.vote_score:+d}"
+            body = ["span",
+                _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
+                _mem_link(e.vote_b_id, memories),
+            ]
+        case Compaction():
+            body = ["span.event-preview",
+                f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
+                + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else "")]
+        case _:
+            content = getattr(e, 'content', '') or ''
+            body = ["span.event-preview", content[:80] + ("…" if len(content) > 80 else "")]
+    return ["span.event-summary",
+        ["span.event-num", f"{i} "],
+        ["span.event-type", f"{etype} "],
+        ["span.event-time", f"{ts_fmt(e.timestamp)} "],
+        body,
+    ]
+
+
 def render_event(e: Event, i: int, memories: dict = None, being_file: str = None) -> list:
-    """Compact summary-only initial render.  Body loads lazily: the hidden expand
-    form posts via fetch to /do; event_body() returns the HTML fragment directly."""
+    """Collapsed row. If expandable, the whole row is a form that POSTs to /do."""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
@@ -373,89 +390,48 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
     if eid:
         attrs["id"] = f"evt-{eid}"
 
-    match e:
-        case Vote():
-            score_str = f"{e.vote_score:+d}"
-            summary_body = ["span",
-                _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
-                _mem_link(e.vote_b_id, memories),
-            ]
-        case Compaction():
-            summary_body = ["span.event-preview",
-                f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
-                + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else "")]
-        case _:
-            content = getattr(e, 'content', '') or ''
-            summary_body = ["span.event-preview", content[:80] + ("…" if len(content) > 80 else "")]
-
+    summary = _event_summary(e, i, etype, memories)
     has_body = _event_body_html(e, memories) is not None
-    expand = (["form.expand-form", {"action": "/do", "method": "post"},
-                   *snippet_hidden(f"event_body('{being_file}', {i})")] if has_body and being_file else None)
 
-    return ["details.event", attrs,
-        ["summary",
-            ["span.event-num", f"{i} "],
-            ["span.event-type", f"{etype} "],
-            ["span.event-time", f"{ts_fmt(e.timestamp)} "],
-            summary_body,
-        ],
-        expand,
-    ]
+    if has_body and being_file:
+        return ["form.event", {**attrs, "action": "/do", "method": "post"},
+            *snippet_hidden(f"event_body('{being_file}', {i})"),
+            ["button.event-row", {"type": "submit"}, summary],
+        ]
+
+    return ["div.event", attrs, summary]
 
 
 def render_event_expanded(e: Event, i: int, memories: dict = None) -> list:
-    """Full event render with body inline — used when morphing after lazy expand."""
+    """Expanded row with body inline — morphed in by SSE after the POST."""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
-    attrs = {"data-idx": str(i), "open": ""}
+
+    attrs = {"data-idx": str(i)}
     if eid:
         attrs["id"] = f"evt-{eid}"
 
-    match e:
-        case Vote():
-            score_str = f"{e.vote_score:+d}"
-            summary_body = ["span",
-                _mem_link(e.vote_a_id, memories), f" {score_str} vs ",
-                _mem_link(e.vote_b_id, memories),
-            ]
-        case Compaction():
-            summary_body = ["span.event-preview",
-                f"↓{len(e.released_ids)} kept {len(e.kept_ids)}"
-                + (f" ↑{len(e.resurrected_ids)}" if e.resurrected_ids else "")]
-        case _:
-            content = getattr(e, 'content', '') or ''
-            summary_body = ["span.event-preview", content[:80] + ("…" if len(content) > 80 else "")]
-
+    summary = _event_summary(e, i, etype, memories)
     body = _event_body_html(e, memories)
-    return ["details.event", attrs,
-        ["summary",
-            ["span.event-num", f"{i} "],
-            ["span.event-type", f"{etype} "],
-            ["span.event-time", f"{ts_fmt(e.timestamp)} "],
-            summary_body,
-        ],
-        body,
-    ]
+    return ["div.event.expanded", attrs, summary, body]
 
 
 def event_body(being_file: str, idx: int):
-    """/do snippet target: pushes event body via SSE exec, returns 204."""
+    """Returns JS that morphs the event row into its expanded form."""
     events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
     e = events[idx]
     eid = getattr(e, 'id', None)
     if not eid:
-        return PlainTextResponse("", status_code=204)
+        return PlainTextResponse("", status_code=200)
     memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
     body = _event_body_html(e, memories)
     if body is None:
-        return PlainTextResponse("", status_code=204)
-    broadcast_exec(being_file,
-        Three[Selector(f"#evt-{eid}")][MORPH][render_event_expanded(e, idx, memories)],
-    )
-    return PlainTextResponse("", status_code=204)
+        return PlainTextResponse("", status_code=200)
+    js = Three[Selector(f"#evt-{eid}")][MORPH][render_event_expanded(e, idx, memories)]
+    return PlainTextResponse(js, status_code=200)
 
 
 def render_events_div(being_file: str) -> list:
@@ -723,10 +699,6 @@ async def sse_being(being_file: str, request: Request):
                     else:
                         bar = ["div#compaction-progress.compaction-progress"]
                     yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar])
-
-                queue = _exec_queue.pop(being_file, [])
-                for js in queue:
-                    yield exec_event(js)
 
             except Exception:
                 pass
