@@ -33,7 +33,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse,
 from fastapi.staticfiles import StaticFiles
 from app.hiccup import render, RawContent
 from app.state import get_app_state
-from app.patch import One, Two, Three, Selector, Eval, MORPH, REMOVE
+from app.patch import One, Three, Selector, Eval, MORPH
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 ROOT = Path(__file__).parent.parent
@@ -194,8 +194,7 @@ def go(being_file: str, message: str = ''):
 
 
 def compact_async(being_file: str, strategy: str = "default"):
-    from adam import load, compact, current_memories, STRATEGIES
-    from schema import Thought, Perception, Response
+    from adam import load, compact, STRATEGIES
 
     path = BEINGS_DIR / f"{being_file}.jsonl"
     if not path.exists():
@@ -483,6 +482,16 @@ def _push_initial_page(title: str, body_content: list):
     yield exec_event(Three[Selector("body")][MORPH][["body", body_content]])
 
 
+async def _stream_auth_then_initial(request: Request, session_id: str, title: str, body_content: list):
+    """Common SSE prelude: show login until authed, then paint the initial page."""
+    while not _is_authed(request, session_id):
+        for ev in _push_initial_page("login", _login_form(session_id)):
+            yield ev
+        await asyncio.sleep(1)
+    for ev in _push_initial_page(title, body_content):
+        yield ev
+
+
 def render_progress_bar(current: int, total: int, phase: str) -> str:
     pct = int(100 * current / total) if total else 0
     return render(
@@ -499,7 +508,7 @@ def render_progress_bar(current: int, total: int, phase: str) -> str:
 def _login_form(session_id: str) -> list:
     return ["div.beings",
         ["form", {"action": "/do", "method": "post"},
-            *snippet_hidden(f"login($password, $session_id)"),
+            *snippet_hidden("login($password, $session_id)"),
             ["input", {"type": "hidden", "name": "session_id", "value": session_id}],
             ["input", {"type": "password", "name": "password", "placeholder": "password", "autofocus": "true"}],
             ["button", "enter"],
@@ -637,11 +646,7 @@ async def sse_index(request: Request):
     session_id = uuid.uuid4().hex
 
     async def generate():
-        while not _is_authed(request, session_id):
-            for ev in _push_initial_page("login", _login_form(session_id)):
-                yield ev
-            await asyncio.sleep(1)
-        for ev in _push_initial_page("beings", index_content()):
+        async for ev in _stream_auth_then_initial(request, session_id, "beings", index_content()):
             yield ev
         last_count = len(find_beings())
         while True:
@@ -663,11 +668,7 @@ async def sse_git(request: Request):
     session_id = uuid.uuid4().hex
 
     async def generate():
-        while not _is_authed(request, session_id):
-            for ev in _push_initial_page("login", _login_form(session_id)):
-                yield ev
-            await asyncio.sleep(1)
-        for ev in _push_initial_page("git", git_content()):
+        async for ev in _stream_auth_then_initial(request, session_id, "git", git_content()):
             yield ev
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
@@ -681,11 +682,9 @@ async def sse_config(being_file: str, request: Request):
     session_id = uuid.uuid4().hex
 
     async def generate():
-        while not _is_authed(request, session_id):
-            for ev in _push_initial_page("login", _login_form(session_id)):
-                yield ev
-            await asyncio.sleep(1)
-        for ev in _push_initial_page(f"{being_file} config", config_content(being_file)):
+        async for ev in _stream_auth_then_initial(
+            request, session_id, f"{being_file} config", config_content(being_file)
+        ):
             yield ev
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
@@ -702,11 +701,7 @@ async def sse_being(being_file: str, request: Request):
     session_id = uuid.uuid4().hex
 
     async def generate():
-        while not _is_authed(request, session_id):
-            for ev in _push_initial_page("login", _login_form(session_id)):
-                yield ev
-            await asyncio.sleep(1)
-        for ev in _push_initial_page(being_file, being_content(being_file)):
+        async for ev in _stream_auth_then_initial(request, session_id, being_file, being_content(being_file)):
             yield ev
 
         last_mtime = 0.0
