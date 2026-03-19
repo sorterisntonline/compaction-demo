@@ -125,6 +125,13 @@ def scrub(value: str) -> str:
     return repr(value)
 
 
+def apply_snippet_substitutions(snippet: str, form_data: dict[str, str]) -> str:
+    """Replace $key placeholders; longest keys first so $idx is not broken by $id."""
+    for key, value in sorted(form_data.items(), key=lambda x: len(x[0]), reverse=True):
+        snippet = snippet.replace(f"${key}", scrub(value))
+    return snippet
+
+
 def snippet_hidden(code: str) -> list:
     nonce = generate_nonce()
     sig = sign(code, nonce)
@@ -735,8 +742,7 @@ async def do(request: Request):
         return PlainTextResponse("Invalid nonce", status_code=403)
 
     form_data = {k: str(v) for k, v in form.items() if not k.startswith('__')}
-    for key, value in form_data.items():
-        snippet = snippet.replace(f'${key}', scrub(value))
+    snippet = apply_snippet_substitutions(snippet, form_data)
 
     try:
         return eval(snippet)

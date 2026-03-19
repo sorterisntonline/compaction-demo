@@ -1,5 +1,7 @@
 """Tests for vote caching behavior in adam.vote."""
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from adam import Being, vote
@@ -24,8 +26,20 @@ def test_vote_uses_cache_when_present(monkeypatch):
     # Cache a positive score for {a,b}
     being.votes[("a", "b")] = 15
 
-    score_ab = vote(being, a, b)
-    score_ba = vote(being, b, a)
+    def _run_in_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return (
+                loop.run_until_complete(vote(being, a, b)),
+                loop.run_until_complete(vote(being, b, a)),
+            )
+        finally:
+            loop.close()
+
+    # pytest-asyncio may keep a loop running on the main thread
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        score_ab, score_ba = pool.submit(_run_in_thread).result()
 
     # Cache should be reused; llm should not run
     assert calls["llm"] == 0
