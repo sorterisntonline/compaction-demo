@@ -8,16 +8,44 @@ class Eval:
     def __init__(self, code): self.code = code
 
 class Action:
-    def __init__(self, name): self.name = name
+    def __init__(self, name, requires=None):
+        self.name = name
+        self.requires = requires  # Selector or Action that must precede this
 
-MORPH   = Action("MORPH")
-PREPEND = Action("PREPEND")
-APPEND  = Action("APPEND")
+MORPH   = Action("MORPH", requires=Selector)
+PREPEND = Action("PREPEND", requires=Selector)
+APPEND  = Action("APPEND", requires=Selector)
 REMOVE  = Action("REMOVE")
-OUTER   = Action("OUTER")
-CLASSES = Action("CLASSES")
-ADD     = Action("ADD")
-TOGGLE  = Action("TOGGLE")
+OUTER   = Action("OUTER", requires=Selector)
+CLASSES = Action("CLASSES", requires=Selector)
+ADD     = Action("ADD", requires=CLASSES)
+TOGGLE  = Action("TOGGLE", requires=CLASSES)
+
+
+def _validate_step(items):
+    item = items[-1]
+    prior = items[:-1]
+
+    prior_actions = [x for x in prior if isinstance(x, Action)]
+    has_selector = any(isinstance(x, Selector) for x in prior)
+    prior_data = [x for x in prior if not isinstance(x, (Selector, Action, Eval))]
+
+    # Data must be last — nothing comes after data
+    if prior_data:
+        raise ValueError(f"Data must be the last item in the chain")
+
+    # Selector must come before any actions
+    if isinstance(item, Selector) and prior_actions:
+        raise ValueError(f"Selector must come before actions, not after {prior_actions[-1].name}")
+
+    # Action requires check
+    if isinstance(item, Action) and item.requires is not None:
+        if item.requires is Selector:
+            if not has_selector:
+                raise ValueError(f"{item.name} requires a Selector before it")
+        elif isinstance(item.requires, Action):
+            if item.requires not in prior_actions:
+                raise ValueError(f"{item.name} requires {item.requires.name} before it")
 
 
 def _resolve(items):
@@ -80,6 +108,7 @@ class DepthChain:
 
     def __getitem__(self, item):
         items = self.items + [item]
+        _validate_step(items)
         if len(items) >= self.depth:
             return _resolve(items)
         return DepthChain(self.depth, items)
