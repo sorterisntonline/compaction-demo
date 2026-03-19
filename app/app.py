@@ -18,9 +18,6 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
-# Events cache: being_file -> (mtime, rendered_event_list)
-_events_cache: dict[str, tuple[float, list]] = {}
-
 # Compaction progress: being_file -> {current, total, phase} or None when done
 _compaction_progress: dict[str, dict | None] = {}
 # Pending exec JS strings to push over SSE: being_file -> [js, ...]
@@ -33,37 +30,54 @@ def broadcast_exec(being_file: str, *js_strings: str):
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.hiccup import render, RawContent
 from app.state import get_app_state
-from app.patch import Two, Three, Selector, Eval, MORPH, REMOVE
+from app.patch import One, Two, Three, Selector, Eval, MORPH, REMOVE
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
 ROOT = Path(__file__).parent.parent
 BEINGS_DIR = ROOT
 
 
-# === AUTH ===
+# === AUTH (inside SSE stream) ===
 
 def _auth_token() -> str:
     password = os.getenv("PASSWORD", "")
     return hashlib.sha256(f"auth|{password}".encode()).hexdigest() if password else ""
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        token = _auth_token()
-        if not token:
-            return await call_next(request)
-        if request.url.path.startswith("/static") or request.url.path in ("/login",):
-            return await call_next(request)
-        if request.cookies.get("session") == token:
-            return await call_next(request)
-        return RedirectResponse("/login")
+_authed_sessions: set[str] = set()
+
+def _is_authed(request: Request, session_id: str) -> bool:
+    token = _auth_token()
+    if not token:
+        return True
+    if request.cookies.get("session") == token:
+        return True
+    return session_id in _authed_sessions
 
 app = FastAPI()
-app.add_middleware(AuthMiddleware)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+SHELL_HTML = """<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body>
+<script type="module">
+import { Idiomorph } from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
+window.Idiomorph = Idiomorph;
+const ssePath = (location.pathname || '/').replace(/\\/$/, '') + '/sse';
+const es = new EventSource(ssePath);
+es.addEventListener('exec', e => eval(e.data));
+document.addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+  if (f.dataset.reset !== 'false') f.reset();
+});
+</script>
+</body>
+</html>"""
 
 def get_css_hash() -> str:
     css_path = Path(__file__).parent / "static" / "style.css"
@@ -150,6 +164,19 @@ def save_git_config(url: str):
     return RedirectResponse("/git", status_code=303)
 
 
+def login(password: str, session_id: str):
+    """Called from signed snippet. Verifies password, marks session authed, sets cookie."""
+    token = _auth_token()
+    if not token:
+        return PlainTextResponse("", status_code=204)
+    if hashlib.sha256(f"auth|{password}".encode()).hexdigest() != token:
+        return PlainTextResponse("", status_code=204)
+    _authed_sessions.add(session_id)
+    resp = PlainTextResponse("", status_code=204)
+    resp.set_cookie("session", token, httponly=True, samesite="lax")
+    return resp
+
+
 # === SNIPPETS ===
 
 def go(being_file: str, message: str = ''):
@@ -163,7 +190,7 @@ def go(being_file: str, message: str = ''):
             think(being)
 
     threading.Thread(target=run, daemon=True).start()
-    return RedirectResponse(f'/{being_file}', status_code=303)
+    return PlainTextResponse("", status_code=204)
 
 
 def compact_async(being_file: str, strategy: str = "default"):
@@ -192,7 +219,7 @@ def compact_async(being_file: str, strategy: str = "default"):
             _compaction_progress.pop(being_file, None)
 
     threading.Thread(target=run, daemon=True).start()
-    return RedirectResponse(f"/{being_file}", status_code=303)
+    return PlainTextResponse("", status_code=204)
 
 
 def redact(being_file: str):
@@ -205,7 +232,7 @@ def redact(being_file: str):
     if last_idx is None:
         return PlainTextResponse('Nothing to redact.', status_code=400)
     path.write_text('\n'.join(lines[:last_idx]) + '\n')
-    return RedirectResponse(f'/{being_file}', status_code=303)
+    return PlainTextResponse("", status_code=204)
 
 
 def git_push():
@@ -247,7 +274,7 @@ def update_config(being_file: str, **kwargs):
     for key, value in kwargs.items():
         if value:
             app_state.set_config(being_file, key, value)
-    return RedirectResponse(f'/{being_file}/config', status_code=303)
+    return PlainTextResponse("", status_code=204)
 
 
 # === HELPERS ===
@@ -284,17 +311,12 @@ def ts_fmt(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def load_script(name: str) -> str:
-    return (Path(__file__).parent / "js" / name).read_text()
-
-
-def head(title: str) -> list:
+def _head_content(title: str) -> list:
     return ["head",
         ["meta", {"charset": "utf-8"}],
         ["meta", {"name": "viewport", "content": "width=device-width, initial-scale=1"}],
         ["title", title],
         ["link", {"rel": "stylesheet", "href": f"/static/style.css?v={CSS_HASH}"}],
-        ["script", {"src": "https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js", "type": "module"}],
     ]
 
 
@@ -438,15 +460,11 @@ def event_body(being_file: str, idx: int):
     return PlainTextResponse("", status_code=204)
 
 
-def render_events_div(being_file: str, mtime: float = 0.0) -> str:
-    cached_mtime, event_list = _events_cache.get(being_file, (None, None))
-    if cached_mtime != mtime or event_list is None:
-        events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
-        memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
-        event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(events)]
-        event_list.reverse()
-        _events_cache[being_file] = (mtime, event_list)
-
+def render_events_div(being_file: str) -> str:
+    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
+    event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(events)]
+    event_list.reverse()
     return render(["div#events.events", event_list])
 
 
@@ -456,6 +474,13 @@ def exec_event(js: str) -> str:
         lines.append(f"data: {line}")
     lines += ["", ""]
     return "\n".join(lines)
+
+
+def _push_initial_page(title: str, body_content: list):
+    """Yield exec events to paint the full page."""
+    yield exec_event(One[Eval(f"document.title = {json.dumps(title)}")])
+    yield exec_event(Three[Selector("head")][MORPH][_head_content(title)])
+    yield exec_event(Three[Selector("body")][MORPH][["body", body_content]])
 
 
 def render_progress_bar(current: int, total: int, phase: str) -> str:
@@ -469,9 +494,20 @@ def render_progress_bar(current: int, total: int, phase: str) -> str:
     )
 
 
-# === PAGES ===
+# === CONTENT BUILDERS (body only, for SSE push) ===
 
-def index_page() -> str:
+def _login_form(session_id: str) -> list:
+    return ["div.beings",
+        ["form", {"action": "/do", "method": "post"},
+            *snippet_hidden(f"login($password, $session_id)"),
+            ["input", {"type": "hidden", "name": "session_id", "value": session_id}],
+            ["input", {"type": "password", "name": "password", "placeholder": "password", "autofocus": "true"}],
+            ["button", "enter"],
+        ],
+    ]
+
+
+def index_content() -> list:
     beings = find_beings()
     links = []
     if beings:
@@ -484,14 +520,12 @@ def index_page() -> str:
     else:
         links = ["No beings found"]
     git_link = ["a.config-link", {"href": "/git"}, "git"]
-    return render(["html", head("beings"), ["body", ["div.beings", ["div.top-bar", git_link], *links]]])
+    return ["div.beings", ["div.top-bar", git_link], *links]
 
 
-def being_page(being_file: str) -> str:
+def being_content(being_file: str) -> list:
     path = BEINGS_DIR / f"{being_file}.jsonl"
     events = load_events(path)
-    mtime = path.stat().st_mtime if path.exists() else 0.0
-
     init = next((e for e in events if isinstance(e, Init)), None)
     model = init.model if init else "?"
 
@@ -530,28 +564,18 @@ def being_page(being_file: str) -> str:
         ["button", "🗜️ compact"]
     ]
 
-    poem_js = RawContent(f"""
-import {{ Idiomorph }} from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
-window.Idiomorph = Idiomorph;
-const es = new EventSource('/sse/{being_file}');
-es.addEventListener('exec', e => eval(e.data));
-""")
+    events_div = RawContent(render_events_div(being_file))
 
-    # Share cache with SSE — nonces generated once per mtime, not twice
-    events_div = RawContent(render_events_div(being_file, mtime))
-
-    return render(["html", head(being_file), ["body",
+    return [
         top,
         ["div", redact_form, " ", push_form, " ", compact_form],
         ["div#compaction-progress.compaction-progress"],
         form,
-        ["script", RawContent(load_script("interactions.js"))],
-        ["script", {"type": "module"}, poem_js],
         events_div,
-    ]])
+    ]
 
 
-def git_page() -> str:
+def git_content() -> list:
     cfg = load_git_config()
     token_set = bool(os.getenv('GITLAB_TOKEN', ''))
 
@@ -568,11 +592,10 @@ def git_page() -> str:
     ]
 
     top = ["div.top-bar", ["a", {"href": "/"}, "←"], " git"]
+    return [top, url_form, push_form]
 
-    return render(["html", head("git"), ["body", top, url_form, push_form]])
 
-
-def config_page(being_file: str) -> str:
+def config_content(being_file: str) -> list:
     app_state = get_app_state()
     colors = app_state.get_colors(being_file)
 
@@ -594,52 +617,98 @@ def config_page(being_file: str) -> str:
         ["button", "save config"]
     ]
 
-    return render(["html", head(f"{being_file} config"), ["body", top, form]])
+    return [top, form]
 
 
 # === ROUTES ===
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_page():
-    form = ["form", {"action": "/login", "method": "post"},
-        ["input", {"type": "password", "name": "password", "placeholder": "password", "autofocus": "true"}],
-        ["button", "enter"]
-    ]
-    return render(["html", head("login"), ["body", ["div.beings", form]]])
-
-
-@app.post("/login")
-async def login(request: Request):
-    form = await request.form()
-    password = str(form.get("password", ""))
-    token = _auth_token()
-    if token and hashlib.sha256(f"auth|{password}".encode()).hexdigest() == token:
-        resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie("session", token, httponly=True, samesite="lax")
-        return resp
-    return RedirectResponse("/login", status_code=303)
-
 
 @app.exception_handler(Exception)
 async def error_handler(request: Request, exc: Exception):
     return PlainTextResponse(f"Error\n\n{traceback.format_exc()}", status_code=500)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    return index_page()
+def _sse_headers():
+    return {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
-@app.get("/git", response_class=HTMLResponse)
-async def git_config():
-    return git_page()
-
-
-@app.get("/sse/{being_file}")
-async def sse_endpoint(being_file: str, request: Request):
-    path = BEINGS_DIR / f"{being_file}.jsonl"
+@app.get("/sse")
+async def sse_index(request: Request):
+    """SSE for index page at /."""
+    session_id = uuid.uuid4().hex
 
     async def generate():
+        while not _is_authed(request, session_id):
+            for ev in _push_initial_page("login", _login_form(session_id)):
+                yield ev
+            await asyncio.sleep(1)
+        for ev in _push_initial_page("beings", index_content()):
+            yield ev
+        last_count = len(find_beings())
+        while True:
+            if await request.is_disconnected():
+                break
+            await asyncio.sleep(2)
+            beings = find_beings()
+            if len(beings) != last_count:
+                last_count = len(beings)
+                for ev in _push_initial_page("beings", index_content()):
+                    yield ev
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
+
+
+@app.get("/git/sse")
+async def sse_git(request: Request):
+    """SSE for git config page at /git."""
+    session_id = uuid.uuid4().hex
+
+    async def generate():
+        while not _is_authed(request, session_id):
+            for ev in _push_initial_page("login", _login_form(session_id)):
+                yield ev
+            await asyncio.sleep(1)
+        for ev in _push_initial_page("git", git_content()):
+            yield ev
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
+
+
+@app.get("/{being_file}/config/sse")
+async def sse_config(being_file: str, request: Request):
+    """SSE for config page at /{being_file}/config."""
+    if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
+        return PlainTextResponse("not found", status_code=404)
+    session_id = uuid.uuid4().hex
+
+    async def generate():
+        while not _is_authed(request, session_id):
+            for ev in _push_initial_page("login", _login_form(session_id)):
+                yield ev
+            await asyncio.sleep(1)
+        for ev in _push_initial_page(f"{being_file} config", config_content(being_file)):
+            yield ev
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
+
+
+@app.get("/{being_file}/sse")
+async def sse_being(being_file: str, request: Request):
+    """SSE for being page at /{being_file}."""
+    if being_file in ("git", "login", "do", "sse", "static"):
+        return PlainTextResponse("not found", status_code=404)
+    path = BEINGS_DIR / f"{being_file}.jsonl"
+    if not path.exists():
+        return PlainTextResponse("not found", status_code=404)
+    session_id = uuid.uuid4().hex
+
+    async def generate():
+        while not _is_authed(request, session_id):
+            for ev in _push_initial_page("login", _login_form(session_id)):
+                yield ev
+            await asyncio.sleep(1)
+        for ev in _push_initial_page(being_file, being_content(being_file)):
+            yield ev
+
         last_mtime = 0.0
         last_progress = None
         while True:
@@ -649,7 +718,7 @@ async def sse_endpoint(being_file: str, request: Request):
                 mtime = path.stat().st_mtime if path.exists() else 0.0
                 if mtime != last_mtime:
                     last_mtime = mtime
-                    html = render_events_div(being_file, mtime)
+                    html = render_events_div(being_file)
                     yield exec_event(Three[Selector("#events")][MORPH][html])
 
                 progress = _compaction_progress.get(being_file)
@@ -671,27 +740,33 @@ async def sse_endpoint(being_file: str, request: Request):
                 pass
             await asyncio.sleep(0.15 if being_file in _compaction_progress else 1.0)
 
-    return StreamingResponse(generate(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
-    })
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
 
 
+@app.get("/")
+async def shell_root():
+    return HTMLResponse(SHELL_HTML)
 
-@app.get("/{being_file}", response_class=HTMLResponse)
-async def view_being(being_file: str):
+
+@app.get("/git")
+async def shell_git():
+    return HTMLResponse(SHELL_HTML)
+
+
+@app.get("/{being_file}/config")
+async def shell_config(being_file: str):
+    if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
+        return PlainTextResponse("not found", status_code=404)
+    return HTMLResponse(SHELL_HTML)
+
+
+@app.get("/{being_file}")
+async def shell_being(being_file: str):
     if being_file in ("git", "login", "do", "sse", "static"):
-        return RedirectResponse("/", status_code=303)
+        return PlainTextResponse("not found", status_code=404)
     if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
-        return RedirectResponse("/", status_code=303)
-    return being_page(being_file)
-
-
-@app.get("/{being_file}/config", response_class=HTMLResponse)
-async def view_config(being_file: str):
-    if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
-        return RedirectResponse("/", status_code=303)
-    return config_page(being_file)
+        return PlainTextResponse("not found", status_code=404)
+    return HTMLResponse(SHELL_HTML)
 
 
 @app.post("/do")
