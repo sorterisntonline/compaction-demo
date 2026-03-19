@@ -56,6 +56,16 @@ class AppStateManager:
         )
         self.store.append(event)
 
+# Being cache: being_file -> Being (pstate, kept in memory after first load)
+_beings: dict = {}
+
+def get_being(being_file: str, beings_dir: Path):
+    if being_file not in _beings:
+        from adam import load
+        _beings[being_file] = load(beings_dir / f"{being_file}.jsonl")
+    return _beings[being_file]
+
+
 # Global app state instance
 _app_state = None
 

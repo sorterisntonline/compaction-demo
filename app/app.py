@@ -24,7 +24,7 @@ _compaction_progress: dict[str, dict | None] = {}
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from app.state import get_app_state
+from app.state import get_app_state, get_being
 from app.patch import One, Three, Selector, Eval, MORPH
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 
@@ -174,8 +174,8 @@ def login(password: str, session_id: str):
 # === SNIPPETS ===
 
 def go(being_file: str, message: str = ''):
-    from adam import load, receive, think
-    being = load(BEINGS_DIR / f'{being_file}.jsonl')
+    from adam import receive, think
+    being = get_being(being_file, BEINGS_DIR)
 
     def run():
         if message.strip():
@@ -188,12 +188,12 @@ def go(being_file: str, message: str = ''):
 
 
 def compact_async(being_file: str, strategy: str = "default"):
-    from adam import load, compact, STRATEGIES
+    from adam import compact, STRATEGIES
 
     path = BEINGS_DIR / f"{being_file}.jsonl"
     if not path.exists():
         return PlainTextResponse(f"Being {being_file} not found", status_code=404)
-    being = load(path)
+    being = get_being(being_file, BEINGS_DIR)
     if not being.declaration:
         return PlainTextResponse(
             f"No declaration. {being_file} must write !declaration before compaction.",
@@ -423,7 +423,7 @@ def render_event_expanded(e: Event, i: int, memories: dict = None, being_file: s
 
 def event_body(being_file: str, idx: int):
     """Returns JS that morphs the event row into its expanded form."""
-    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    events = get_being(being_file, BEINGS_DIR).events
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
     e = events[idx]
@@ -437,7 +437,7 @@ def event_body(being_file: str, idx: int):
 
 def event_collapse(being_file: str, idx: int):
     """Returns JS that morphs an expanded event back to its collapsed row."""
-    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    events = get_being(being_file, BEINGS_DIR).events
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
     e = events[idx]
@@ -447,7 +447,8 @@ def event_collapse(being_file: str, idx: int):
 
 
 def render_events_div(being_file: str) -> list:
-    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    being = get_being(being_file, BEINGS_DIR)
+    events = being.events
     memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
     event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(events)]
     event_list.reverse()
@@ -518,8 +519,8 @@ def index_content() -> list:
 
 
 def being_content(being_file: str) -> list:
-    path = BEINGS_DIR / f"{being_file}.jsonl"
-    events = load_events(path)
+    being = get_being(being_file, BEINGS_DIR)
+    events = being.events
     init = next((e for e in events if isinstance(e, Init)), None)
     model = init.model if init else "?"
 
@@ -689,17 +690,20 @@ async def sse_being(being_file: str, request: Request):
         async for ev in _stream_auth_then_initial(request, session_id, being_file, being_content(being_file)):
             yield ev
 
-        last_mtime = 0.0
+        being = get_being(being_file, BEINGS_DIR)
+        last_count = len(being.events)
         last_progress = None
         while True:
             if await request.is_disconnected():
                 break
             try:
-                mtime = path.stat().st_mtime if path.exists() else 0.0
-                if mtime != last_mtime:
-                    last_mtime = mtime
-                    events_div = render_events_div(being_file)
-                    yield exec_event(Three[Selector("#events")][MORPH][events_div])
+                if len(being.events) > last_count:
+                    new_events = being.events[last_count:]
+                    memories = {e.id: (i, e) for i, e in enumerate(being.events) if getattr(e, 'id', None)}
+                    for i, e in enumerate(new_events):
+                        rendered = render_event(e, last_count + i, memories, being_file)
+                        yield exec_event(Three[Selector("#events")][PREPEND][rendered])
+                    last_count = len(being.events)
 
                 progress = _compaction_progress.get(being_file)
                 if progress != last_progress:
