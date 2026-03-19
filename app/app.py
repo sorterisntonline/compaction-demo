@@ -31,7 +31,6 @@ def broadcast_exec(being_file: str, *js_strings: str):
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from app.hiccup import render, RawContent
 from app.state import get_app_state
 from app.patch import One, Three, Selector, Eval, MORPH
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
@@ -459,12 +458,12 @@ def event_body(being_file: str, idx: int):
     return PlainTextResponse("", status_code=204)
 
 
-def render_events_div(being_file: str) -> str:
+def render_events_div(being_file: str) -> list:
     events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
     memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
     event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(events)]
     event_list.reverse()
-    return render(["div#events.events", event_list])
+    return ["div#events.events", event_list]
 
 
 def exec_event(js: str) -> str:
@@ -492,15 +491,13 @@ async def _stream_auth_then_initial(request: Request, session_id: str, title: st
         yield ev
 
 
-def render_progress_bar(current: int, total: int, phase: str) -> str:
+def render_progress_bar(current: int, total: int, phase: str) -> list:
     pct = int(100 * current / total) if total else 0
-    return render(
-        [
-            "div#compaction-progress.compaction-progress",
-            ["div.progress-bar", ["div.progress-fill", {"style": f"width: {pct}%"}]],
-            ["span.progress-text", f"{phase} {current}/{total}"],
-        ]
-    )
+    return [
+        "div#compaction-progress.compaction-progress",
+        ["div.progress-bar", ["div.progress-fill", {"style": f"width: {pct}%"}]],
+        ["span.progress-text", f"{phase} {current}/{total}"],
+    ]
 
 
 # === CONTENT BUILDERS (body only, for SSE push) ===
@@ -573,7 +570,7 @@ def being_content(being_file: str) -> list:
         ["button", "🗜️ compact"]
     ]
 
-    events_div = RawContent(render_events_div(being_file))
+    events_div = render_events_div(being_file)
 
     return [
         top,
@@ -713,19 +710,19 @@ async def sse_being(being_file: str, request: Request):
                 mtime = path.stat().st_mtime if path.exists() else 0.0
                 if mtime != last_mtime:
                     last_mtime = mtime
-                    html = render_events_div(being_file)
-                    yield exec_event(Three[Selector("#events")][MORPH][html])
+                    events_div = render_events_div(being_file)
+                    yield exec_event(Three[Selector("#events")][MORPH][events_div])
 
                 progress = _compaction_progress.get(being_file)
                 if progress != last_progress:
                     last_progress = progress
                     if progress:
-                        bar_html = render_progress_bar(
+                        bar = render_progress_bar(
                             progress["current"], progress["total"], progress["phase"]
                         )
                     else:
-                        bar_html = render(["div#compaction-progress.compaction-progress"])
-                    yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar_html])
+                        bar = ["div#compaction-progress.compaction-progress"]
+                    yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar])
 
                 queue = _exec_queue.pop(being_file, [])
                 for js in queue:
