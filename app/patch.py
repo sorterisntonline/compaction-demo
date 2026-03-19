@@ -49,9 +49,9 @@ def _resolve(items):
     if action == MORPH:
         return f"Idiomorph.morph({sel_js}, `{html}`)"
     if action == PREPEND:
-        return f"Idiomorph.morph({sel_js}, `{html}`, {{morphStyle: 'prepend'}})"
+        return f"{sel_js}.insertAdjacentHTML('afterbegin', `{html}`)"
     if action == APPEND:
-        return f"Idiomorph.morph({sel_js}, `{html}`, {{morphStyle: 'append'}})"
+        return f"{sel_js}.insertAdjacentHTML('beforeend', `{html}`)"
     if action == REMOVE:
         return f"{sel_js}.remove()"
     if action == OUTER:

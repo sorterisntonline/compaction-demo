@@ -1,6 +1,7 @@
 """
 Application state management using event sourcing
 """
+import asyncio
 import time
 from pathlib import Path
 from typing import Dict
@@ -9,7 +10,7 @@ from dataclasses import dataclass, field
 from event_store import EventStore
 from .events import AppInit, ConfigChanged
 
-@dataclass  
+@dataclass
 class AppState:
     config: Dict[str, Dict[str, str]] = field(default_factory=dict)  # being_id -> {key: value}
     version: str = "0.1.0"
@@ -19,7 +20,7 @@ def app_reducer(state: AppState, event) -> None:
     match event:
         case AppInit(version=version):
             state.version = version
-            
+
         case ConfigChanged(being_id=being_id, key=key, value=value):
             if being_id not in state.config:
                 state.config[being_id] = {}
@@ -29,23 +30,23 @@ class AppStateManager:
     def __init__(self, log_path: Path):
         initial_state = AppState()
         self.store = EventStore(log_path, app_reducer, initial_state)
-        
+
         # Initialize with AppInit if empty
         if not log_path.exists():
             self.store.append(AppInit(timestamp=int(time.time() * 1000)))
-    
+
     def get_config(self, being_id: str, key: str, default: str = "") -> str:
         """Get config value for a being"""
         state = self.store.state
         return state.config.get(being_id, {}).get(key, default)
-    
+
     def get_colors(self, being_id: str) -> Dict[str, str]:
         """Get colors for a being, with defaults"""
         return {
             "primary": self.get_config(being_id, "primary_color", "#ccc"),
             "secondary": self.get_config(being_id, "secondary_color", "#888")
         }
-    
+
     def set_config(self, being_id: str, key: str, value: str):
         """Set config value for a being"""
         event = ConfigChanged(
@@ -62,8 +63,14 @@ _beings: dict = {}
 def get_being(being_file: str, beings_dir: Path):
     if being_file not in _beings:
         from adam import load
-        _beings[being_file] = load(beings_dir / f"{being_file}.jsonl")
+        being = load(beings_dir / f"{being_file}.jsonl")
+        being.commands = asyncio.Queue()
+        _beings[being_file] = being
     return _beings[being_file]
+
+
+def evict_being(being_file: str):
+    _beings.pop(being_file, None)
 
 
 # Global app state instance

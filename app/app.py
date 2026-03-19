@@ -14,19 +14,16 @@ import traceback
 import os
 import subprocess
 import shutil
-import threading
 from pathlib import Path
 from datetime import datetime
-
-# Compaction progress: being_file -> {current, total, phase} or None when done
-_compaction_progress: dict[str, dict | None] = {}
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from app.state import get_app_state, get_being
-from app.patch import One, Three, Selector, Eval, MORPH
+from app.state import get_app_state, get_being, evict_being
+from app.patch import One, Three, Selector, Eval, MORPH, PREPEND
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
+from adam import Progress, STRATEGIES
 
 ROOT = Path(__file__).parent.parent
 BEINGS_DIR = ROOT
@@ -91,8 +88,6 @@ _last_nonce_clean: float = 0.0
 
 
 def _clean_nonces():
-    # Rate-limit the scan to once per minute — calling this inside generate_nonce()
-    # was O(|_nonces|) per call, making a page with thousands of events O(n²).
     global _last_nonce_clean
     now = time.time()
     if now - _last_nonce_clean < 60:
@@ -159,7 +154,6 @@ def save_git_config(url: str):
 
 
 def login(password: str, session_id: str):
-    """Called from signed snippet. Verifies password, marks session authed, sets cookie."""
     token = _auth_token()
     if not token:
         return PlainTextResponse("", status_code=204)
@@ -171,47 +165,25 @@ def login(password: str, session_id: str):
     return resp
 
 
-# === SNIPPETS ===
+# === SNIPPETS (called from /do via signed eval) ===
 
 def go(being_file: str, message: str = ''):
-    from adam import receive, think
     being = get_being(being_file, BEINGS_DIR)
-
-    def run():
-        if message.strip():
-            receive(being, message)
-        else:
-            think(being)
-
-    threading.Thread(target=run, daemon=True).start()
+    if message.strip():
+        being.commands.put_nowait(("receive", message))
+    else:
+        being.commands.put_nowait(("think",))
     return PlainTextResponse("", status_code=204)
 
 
 def compact_async(being_file: str, strategy: str = "default"):
-    from adam import compact, STRATEGIES
-
-    path = BEINGS_DIR / f"{being_file}.jsonl"
-    if not path.exists():
-        return PlainTextResponse(f"Being {being_file} not found", status_code=404)
     being = get_being(being_file, BEINGS_DIR)
     if not being.declaration:
         return PlainTextResponse(
             f"No declaration. {being_file} must write !declaration before compaction.",
             status_code=400,
         )
-    strategy_obj = STRATEGIES.get(strategy, STRATEGIES["default"])
-
-    def run():
-        try:
-            def on_progress(current, total, phase):
-                _compaction_progress[being_file] = {"current": current, "total": total, "phase": phase}
-
-            _compaction_progress[being_file] = {"current": 0, "total": 1, "phase": "Starting"}
-            compact(being, strategy_obj, on_progress=on_progress)
-        finally:
-            _compaction_progress.pop(being_file, None)
-
-    threading.Thread(target=run, daemon=True).start()
+    being.commands.put_nowait(("compact", strategy))
     return PlainTextResponse("", status_code=204)
 
 
@@ -225,7 +197,8 @@ def redact(being_file: str):
     if last_idx is None:
         return PlainTextResponse('Nothing to redact.', status_code=400)
     path.write_text('\n'.join(lines[:last_idx]) + '\n')
-    return PlainTextResponse("", status_code=204)
+    evict_being(being_file)
+    return PlainTextResponse("location.reload()", status_code=200)
 
 
 def git_push():
@@ -272,31 +245,18 @@ def update_config(being_file: str, **kwargs):
 
 # === HELPERS ===
 
-def load_events(path: Path) -> list[Event]:
-    if not path.exists():
-        return []
-    events = []
-    with open(path) as f:
-        for line in f:
-            if line.strip():
-                event = from_dict(json.loads(line))
-                if event is not None:
-                    events.append(event)
-    return events
-
-
 def find_beings() -> list[dict]:
     beings = []
     for path in BEINGS_DIR.glob("*.jsonl"):
         if path.name.startswith('.'):
             continue
-        events = load_events(path)
-        if not events:
+        try:
+            being = get_being(path.stem, BEINGS_DIR)
+        except Exception:
             continue
-        init = next((e for e in events if isinstance(e, Init)), None)
-        if not init or not init.model:
+        if not being.model:
             continue
-        beings.append({"file": path.stem, "model": init.model, "capacity": init.capacity, "events": len(events)})
+        beings.append({"file": path.stem, "model": being.model, "capacity": being.capacity, "events": len(being.events)})
     return sorted(beings, key=lambda b: b["events"], reverse=True)
 
 
@@ -311,6 +271,10 @@ def _head_content(title: str) -> list:
         ["title", title],
         ["link", {"rel": "stylesheet", "href": f"/static/style.css?v={CSS_HASH}"}],
     ]
+
+
+def _build_memories(being) -> dict:
+    return {e.id: (i, e) for i, e in enumerate(being.events) if getattr(e, 'id', None)}
 
 
 # === RENDER HELPERS ===
@@ -329,7 +293,6 @@ def _mem_link(mid: str, memories: dict) -> list:
 
 
 def _event_body_html(e: Event, memories: dict) -> list | None:
-    """Renders just the expandable body for an event (no <details> wrapper)."""
     match e:
         case Vote(reasoning=r) if r:
             return ["div.event-content", ["span.copy-btn", "⧉"], r]
@@ -381,7 +344,6 @@ def _event_summary(e: Event, i: int, etype: str, memories: dict) -> list:
 
 
 def render_event(e: Event, i: int, memories: dict = None, being_file: str = None) -> list:
-    """Collapsed row. If expandable, the whole row is a form that POSTs to /do."""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
@@ -403,7 +365,6 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
 
 
 def render_event_expanded(e: Event, i: int, memories: dict = None, being_file: str = None) -> list:
-    """Expanded row with body inline — morphed in after the POST."""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
@@ -422,7 +383,6 @@ def render_event_expanded(e: Event, i: int, memories: dict = None, being_file: s
 
 
 def event_body(being_file: str, idx: int):
-    """Returns JS that morphs the event row into its expanded form."""
     events = get_being(being_file, BEINGS_DIR).events
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
@@ -436,7 +396,6 @@ def event_body(being_file: str, idx: int):
 
 
 def event_collapse(being_file: str, idx: int):
-    """Returns JS that morphs an expanded event back to its collapsed row."""
     events = get_being(being_file, BEINGS_DIR).events
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
@@ -448,9 +407,8 @@ def event_collapse(being_file: str, idx: int):
 
 def render_events_div(being_file: str) -> list:
     being = get_being(being_file, BEINGS_DIR)
-    events = being.events
-    memories = {e.id: (i, e) for i, e in enumerate(events) if getattr(e, 'id', None)}
-    event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(events)]
+    memories = _build_memories(being)
+    event_list = [render_event(e, i, memories, being_file) for i, e in enumerate(being.events)]
     event_list.reverse()
     return ["div#events.events", event_list]
 
@@ -464,14 +422,12 @@ def exec_event(js: str) -> str:
 
 
 def _push_initial_page(title: str, body_content: list):
-    """Yield exec events to paint the full page."""
     yield exec_event(One[Eval(f"document.title = {json.dumps(title)}")])
     yield exec_event(Three[Selector("head")][MORPH][_head_content(title)])
     yield exec_event(Three[Selector("body")][MORPH][["body", body_content]])
 
 
 async def _stream_auth_then_initial(request: Request, session_id: str, title: str, body_content: list):
-    """Common SSE prelude: show login until authed, then paint the initial page."""
     while not _is_authed(request, session_id):
         for ev in _push_initial_page("login", _login_form(session_id)):
             yield ev
@@ -487,6 +443,41 @@ def render_progress_bar(current: int, total: int, phase: str) -> list:
         ["div.progress-bar", ["div.progress-fill", {"style": f"width: {pct}%"}]],
         ["span.progress-text", f"{phase} {current}/{total}"],
     ]
+
+
+# === EXECUTE: SSE generator runs commands directly ===
+
+async def execute(being, being_file: str, cmd):
+    from adam import think, receive, compact
+
+    match cmd:
+        case ("think",):
+            async for event in think(being):
+                memories = _build_memories(being)
+                idx = len(being.events) - 1
+                rendered = render_event(event, idx, memories, being_file)
+                yield exec_event(Three[Selector("#events")][PREPEND][rendered])
+
+        case ("receive", msg):
+            async for event in receive(being, msg):
+                memories = _build_memories(being)
+                idx = len(being.events) - 1
+                rendered = render_event(event, idx, memories, being_file)
+                yield exec_event(Three[Selector("#events")][PREPEND][rendered])
+
+        case ("compact", strategy_name):
+            strategy = STRATEGIES.get(strategy_name, STRATEGIES["default"])
+            async for item in compact(being, strategy):
+                if isinstance(item, Progress):
+                    bar = render_progress_bar(item.current, item.total, item.phase)
+                    yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar])
+                else:
+                    memories = _build_memories(being)
+                    idx = len(being.events) - 1
+                    rendered = render_event(item, idx, memories, being_file)
+                    yield exec_event(Three[Selector("#events")][PREPEND][rendered])
+            # Clear progress bar
+            yield exec_event(Three[Selector("#compaction-progress")][MORPH][["div#compaction-progress.compaction-progress"]])
 
 
 # === CONTENT BUILDERS (body only, for SSE push) ===
@@ -628,7 +619,6 @@ def _sse_headers():
 
 @app.get("/sse")
 async def sse_index(request: Request):
-    """SSE for index page at /."""
     session_id = uuid.uuid4().hex
 
     async def generate():
@@ -650,7 +640,6 @@ async def sse_index(request: Request):
 
 @app.get("/git/sse")
 async def sse_git(request: Request):
-    """SSE for git config page at /git."""
     session_id = uuid.uuid4().hex
 
     async def generate():
@@ -662,7 +651,6 @@ async def sse_git(request: Request):
 
 @app.get("/{being_file}/config/sse")
 async def sse_config(being_file: str, request: Request):
-    """SSE for config page at /{being_file}/config."""
     if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
         return PlainTextResponse("not found", status_code=404)
     session_id = uuid.uuid4().hex
@@ -678,7 +666,6 @@ async def sse_config(being_file: str, request: Request):
 
 @app.get("/{being_file}/sse")
 async def sse_being(being_file: str, request: Request):
-    """SSE for being page at /{being_file}."""
     if being_file in ("git", "login", "do", "sse", "static"):
         return PlainTextResponse("not found", status_code=404)
     path = BEINGS_DIR / f"{being_file}.jsonl"
@@ -691,34 +678,17 @@ async def sse_being(being_file: str, request: Request):
             yield ev
 
         being = get_being(being_file, BEINGS_DIR)
-        last_count = len(being.events)
-        last_progress = None
         while True:
+            try:
+                cmd = await asyncio.wait_for(being.commands.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    break
+                continue
+            async for ev in execute(being, being_file, cmd):
+                yield ev
             if await request.is_disconnected():
                 break
-            try:
-                if len(being.events) > last_count:
-                    new_events = being.events[last_count:]
-                    memories = {e.id: (i, e) for i, e in enumerate(being.events) if getattr(e, 'id', None)}
-                    for i, e in enumerate(new_events):
-                        rendered = render_event(e, last_count + i, memories, being_file)
-                        yield exec_event(Three[Selector("#events")][PREPEND][rendered])
-                    last_count = len(being.events)
-
-                progress = _compaction_progress.get(being_file)
-                if progress != last_progress:
-                    last_progress = progress
-                    if progress:
-                        bar = render_progress_bar(
-                            progress["current"], progress["total"], progress["phase"]
-                        )
-                    else:
-                        bar = ["div#compaction-progress.compaction-progress"]
-                    yield exec_event(Three[Selector("#compaction-progress")][MORPH][bar])
-
-            except Exception:
-                pass
-            await asyncio.sleep(0.15 if being_file in _compaction_progress else 1.0)
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=_sse_headers())
 

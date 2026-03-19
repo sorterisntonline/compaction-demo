@@ -1,5 +1,6 @@
 """Integration-ish tests that exercise the current adam.py flow without hitting an LLM."""
 
+import asyncio
 from pathlib import Path
 
 from adam import Being, append, compact, load
@@ -34,19 +35,23 @@ def test_compact_with_stubbed_vote(monkeypatch, tmp_path):
             append(being, Perception(20 + i, f"p{i}", f"p{i}"))
         return being
 
-    def fake_vote(_being, a, b):
+    async def fake_vote(_being, a, b):
         return 50 if a.id > b.id else -50
 
     monkeypatch.setattr("adam.vote", fake_vote)
 
+    async def run_compact(being):
+        async for _ in compact(being):
+            pass
+
     pyrandom.seed(0)
     being1 = build_being("a")
-    compact(being1)
+    asyncio.run(run_compact(being1))
     kept_ids_1 = set(being1.current.keys())
 
     pyrandom.seed(0)
     being2 = build_being("b")
-    compact(being2)
+    asyncio.run(run_compact(being2))
     kept_ids_2 = set(being2.current.keys())
 
     # Capacity=4 -> budget=2 after compaction, plus Init (immune)
