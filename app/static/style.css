@@ -206,6 +206,11 @@ button.event-row:hover {
 .event.expanded .event-summary {
   border-bottom: 1px solid var(--border);
 }
+/* Close button is float:right; without clear, .event-content wraps beside it and
+   the copy control can sit on top of ✕ and steal clicks. */
+.event.expanded .event-content {
+  clear: both;
+}
 .event-content {
   position: relative;
   padding: var(--mobile-padding);
@@ -431,11 +436,19 @@ button.event-close:hover {
   }
 }
 
-/* Copy button */
-.copy-btn {
+/* Copy control (signed /do round-trip) */
+form.copy-form {
   position: absolute;
   top: 0;
   right: 0;
+  margin: 0;
+  padding: 0;
+  display: block;
+}
+form.copy-form button.copy-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
   padding: 2px 4px;
   font-size: 18px;
   line-height: 1;
@@ -446,12 +459,31 @@ button.event-close:hover {
   border-left: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
-.copy-btn:hover { 
-  background: var(--hover-bg); 
+form.copy-form button.copy-btn:hover {
+  background: var(--hover-bg);
+}
+
+span.copy-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 2px 4px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: default;
+  user-select: none;
+  background: var(--bg);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 @media (min-width: 768px) {
-  .copy-btn {
+  form.copy-form button.copy-btn {
+    padding: 4px 6px;
+    font-size: 20px;
+  }
+  span.copy-btn {
     padding: 4px 6px;
     font-size: 20px;
   }

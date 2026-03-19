@@ -225,6 +225,35 @@ def test_collapse_expanded_event(page, server):
     expect(page.locator("form.event.expandable").first).to_be_visible()
 
 
+def test_collapse_close_button_clickable_with_long_body(page, server):
+    """✕ must stay above body content; float+wrap used to let copy-btn steal clicks."""
+    wide = server.beings_dir / "wide.jsonl"
+    init = {
+        "v": 2,
+        "type": "init",
+        "timestamp": 1,
+        "id": "wi",
+        "capacity": 10,
+        "model": "m",
+        "vote_model": "",
+        "api_key": "",
+    }
+    long_thought = {
+        "v": 2,
+        "type": "thought",
+        "timestamp": 2,
+        "id": "t1",
+        # Preview is first 80 chars — marker must appear there.
+        "content": "LONGWRAPMARK " + "x" * 400,
+    }
+    wide.write_text(json.dumps(init) + "\n" + json.dumps(long_thought) + "\n")
+    goto_painted(page, "/wide", server, "form.event.expandable")
+    page.locator("form.event.expandable").locator("button.event-row").click()
+    page.wait_for_selector(".event.expanded", timeout=PAINT_MS)
+    page.locator(".event.expanded button.event-close").click()
+    page.wait_for_selector(".event.expanded", state="detached", timeout=PAINT_MS)
+
+
 # === SEND MESSAGE (MOCK LLM) ===
 
 

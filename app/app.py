@@ -57,13 +57,40 @@ import { Idiomorph } from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.
 window.Idiomorph = Idiomorph;
 const ssePath = (location.pathname || '/').replace(/\\/$/, '') + '/sse';
 const es = new EventSource(ssePath);
-es.addEventListener('exec', e => eval(e.data));
+let awaitingGoExec = false;
+let goLoadingTimer = null;
+function clearGoLoading() {
+  awaitingGoExec = false;
+  if (goLoadingTimer) {
+    clearTimeout(goLoadingTimer);
+    goLoadingTimer = null;
+  }
+  document.querySelector('form.go-form button[type="submit"]')?.classList.remove('sending');
+}
+es.addEventListener('exec', e => {
+  if (awaitingGoExec) clearGoLoading();
+  eval(e.data);
+});
 document.addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
-  const r = await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
-  const t = await r.text();
-  if (t) eval(t);
+  const submitBtn = f.querySelector('button[type="submit"]');
+  const isGo = f.classList.contains('go-form');
+  if (isGo && submitBtn) {
+    submitBtn.classList.add('sending');
+    awaitingGoExec = true;
+    goLoadingTimer = setTimeout(() => {
+      if (awaitingGoExec) clearGoLoading();
+    }, 300000);
+  }
+  try {
+    const r = await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
+    const t = await r.text();
+    if (!r.ok && isGo) clearGoLoading();
+    if (t) eval(t);
+  } catch (err) {
+    if (isGo) clearGoLoading();
+  }
   if (f.dataset.reset !== 'false') f.reset();
 });
 </script>
@@ -183,6 +210,18 @@ def go(being_file: str, message: str = ''):
     return PlainTextResponse("", status_code=204)
 
 
+def copy_to_clipboard(being_file: str, idx: int):
+    events = get_being(being_file, BEINGS_DIR).events
+    if idx < 0 or idx >= len(events):
+        return PlainTextResponse("", status_code=404)
+    e = events[idx]
+    text = _event_copy_text(e)
+    if text is None:
+        return PlainTextResponse("", status_code=204)
+    js = One[Eval(f"void navigator.clipboard.writeText({json.dumps(text)})")]
+    return PlainTextResponse(str(js), status_code=200)
+
+
 def compact_async(being_file: str, strategy: str = "default"):
     being = get_being(being_file, BEINGS_DIR)
     if not being.declaration:
@@ -286,6 +325,16 @@ def _build_memories(being) -> dict:
 
 # === RENDER HELPERS ===
 
+def _event_copy_text(e: Event) -> str | None:
+    match e:
+        case Vote(reasoning=r) if r:
+            return r
+        case _ if (content := getattr(e, "content", "") or ""):
+            return content
+        case _:
+            return None
+
+
 def _mem_link(mid: str, memories: dict) -> list:
     """memories: {id: (index, event)}"""
     entry = memories.get(mid)
@@ -299,10 +348,29 @@ def _mem_link(mid: str, memories: dict) -> list:
     return ["a", {"href": f"#evt-{mid}", "class": "mem-link"}, label]
 
 
-def _event_body_html(e: Event, memories: dict) -> list | None:
+def _copy_control(being_file: str | None, idx: int | None) -> list:
+    if being_file is not None and idx is not None:
+        return [
+            "form",
+            {
+                "action": "/do",
+                "method": "post",
+                "class": "copy-form",
+                "data-reset": "false",
+            },
+            *snippet_hidden(f"copy_to_clipboard({json.dumps(being_file)}, {idx})"),
+            ["button", {"type": "submit", "class": "copy-btn", "aria-label": "Copy to clipboard"}, "⧉"],
+        ]
+    return ["span", {"class": "copy-btn"}, "⧉"]
+
+
+def _event_body_html(
+    e: Event, memories: dict, being_file: str | None = None, idx: int | None = None
+) -> list | None:
+    cc = _copy_control(being_file, idx)
     match e:
         case Vote(reasoning=r) if r:
-            return ["div.event-content", ["span.copy-btn", "⧉"], r]
+            return ["div.event-content", cc, r]
 
         case Compaction():
             def sorted_ids(ids):
@@ -321,7 +389,7 @@ def _event_body_html(e: Event, memories: dict) -> list | None:
             ]
 
         case _ if (content := getattr(e, 'content', '') or ''):
-            return ["div.event-content", ["span.copy-btn", "⧉"], content]
+            return ["div.event-content", cc, content]
 
         case _:
             return None
@@ -360,7 +428,7 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
         attrs["id"] = f"evt-{eid}"
 
     summary = _event_summary(e, i, etype, memories)
-    has_body = _event_body_html(e, memories) is not None
+    has_body = _event_body_html(e, memories, being_file, i) is not None
 
     if has_body and being_file:
         return ["form.event.expandable", {**attrs, "action": "/do", "method": "post"},
@@ -381,7 +449,7 @@ def render_event_expanded(e: Event, i: int, memories: dict = None, being_file: s
         attrs["id"] = f"evt-{eid}"
 
     summary = _event_summary(e, i, etype, memories)
-    body = _event_body_html(e, memories)
+    body = _event_body_html(e, memories, being_file, i)
     collapse = ["form.collapse-form", {"action": "/do", "method": "post"},
         *snippet_hidden(f"event_collapse('{being_file}', {i})"),
         ["button.event-close", {"type": "submit"}, "✕"],
@@ -395,10 +463,12 @@ def event_body(being_file: str, idx: int):
         return PlainTextResponse("", status_code=404)
     e = events[idx]
     memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
-    body = _event_body_html(e, memories)
+    body = _event_body_html(e, memories, being_file, idx)
     if body is None:
         return PlainTextResponse("", status_code=200)
-    js = Three[Selector(f'[data-idx="{idx}"]')][MORPH][render_event_expanded(e, idx, memories, being_file)]
+    js = Three[Selector(f'[data-idx="{idx}"]')][MORPH][
+        render_event_expanded(e, idx, memories, being_file)
+    ]
     return PlainTextResponse(js, status_code=200)
 
 
@@ -531,10 +601,10 @@ def being_content(being_file: str) -> list:
         f"{being_file} ({model}): {len(events)} events, {mem_count} memories, {vote_count} votes"
     ]
 
-    form = ["form", {"action": "/do", "method": "post"},
+    form = ["form", {"action": "/do", "method": "post", "class": "go-form"},
         *snippet_hidden(f"go('{being_file}', $message)"),
         ["textarea", {"name": "message", "rows": "8"}],
-        ["button", "go"]
+        ["button", {"type": "submit"}, "go"],
     ]
 
     redact_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
