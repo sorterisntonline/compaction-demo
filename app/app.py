@@ -394,7 +394,7 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
     has_body = _event_body_html(e, memories) is not None
 
     if has_body and being_file:
-        return ["form.event", {**attrs, "action": "/do", "method": "post"},
+        return ["form.event.expandable", {**attrs, "action": "/do", "method": "post"},
             *snippet_hidden(f"event_body('{being_file}', {i})"),
             ["button.event-row", {"type": "submit"}, summary],
         ]
@@ -402,8 +402,8 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
     return ["div.event", attrs, summary]
 
 
-def render_event_expanded(e: Event, i: int, memories: dict = None) -> list:
-    """Expanded row with body inline — morphed in by SSE after the POST."""
+def render_event_expanded(e: Event, i: int, memories: dict = None, being_file: str = None) -> list:
+    """Expanded row with body inline — morphed in after the POST."""
     memories = memories or {}
     etype = type(e).__name__.lower()
     eid = getattr(e, 'id', None)
@@ -414,7 +414,11 @@ def render_event_expanded(e: Event, i: int, memories: dict = None) -> list:
 
     summary = _event_summary(e, i, etype, memories)
     body = _event_body_html(e, memories)
-    return ["div.event.expanded", attrs, summary, body]
+    collapse = ["form.collapse-form", {"action": "/do", "method": "post"},
+        *snippet_hidden(f"event_collapse('{being_file}', {i})"),
+        ["button.event-close", {"type": "submit"}, "✕"],
+    ] if being_file else None
+    return ["div.event.expanded", attrs, summary, collapse, body]
 
 
 def event_body(being_file: str, idx: int):
@@ -423,14 +427,22 @@ def event_body(being_file: str, idx: int):
     if idx < 0 or idx >= len(events):
         return PlainTextResponse("", status_code=404)
     e = events[idx]
-    eid = getattr(e, 'id', None)
-    if not eid:
-        return PlainTextResponse("", status_code=200)
     memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
     body = _event_body_html(e, memories)
     if body is None:
         return PlainTextResponse("", status_code=200)
-    js = Three[Selector(f"#evt-{eid}")][MORPH][render_event_expanded(e, idx, memories)]
+    js = Three[Selector(f'[data-idx="{idx}"]')][MORPH][render_event_expanded(e, idx, memories, being_file)]
+    return PlainTextResponse(js, status_code=200)
+
+
+def event_collapse(being_file: str, idx: int):
+    """Returns JS that morphs an expanded event back to its collapsed row."""
+    events = load_events(BEINGS_DIR / f"{being_file}.jsonl")
+    if idx < 0 or idx >= len(events):
+        return PlainTextResponse("", status_code=404)
+    e = events[idx]
+    memories = {ev.id: (j, ev) for j, ev in enumerate(events) if getattr(ev, 'id', None)}
+    js = Three[Selector(f'[data-idx="{idx}"]')][MORPH][render_event(e, idx, memories, being_file)]
     return PlainTextResponse(js, status_code=200)
 
 

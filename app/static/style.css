@@ -175,19 +175,36 @@ button:disabled {
 .event {
   border-bottom: 1px solid var(--border);
 }
-.event summary {
+.event-summary {
+  display: block;
   padding: var(--mobile-padding);
-  cursor: pointer;
   font-size: 18px;
-}
-.event summary:hover { 
-  background: var(--hover-bg);
 }
 .event-num { color: var(--muted); }
 .event-type { font-weight: normal; }
 .event-time { color: var(--muted); }
 .event-preview {
   color: var(--muted);
+}
+
+/* Expandable event rows look like text, not buttons */
+.event.expandable {
+  padding: 0;
+}
+button.event-row {
+  all: unset;
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+button.event-row:hover {
+  background: var(--hover-bg);
+}
+
+/* Expanded event */
+.event.expanded .event-summary {
+  border-bottom: 1px solid var(--border);
 }
 .event-content {
   position: relative;
@@ -196,11 +213,26 @@ button:disabled {
   word-break: break-word;
   overflow-wrap: break-word;
   font-size: 20px;
-  border-top: 1px solid var(--border);
+}
+
+/* Close button */
+button.event-close {
+  all: unset;
+  float: right;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 18px;
+  color: var(--muted);
+}
+button.event-close:hover {
+  color: var(--text);
+}
+.collapse-form {
+  display: inline;
 }
 
 @media (min-width: 768px) {
-  .event summary,
+  .event-summary,
   .event-content {
     padding: var(--desktop-padding);
   }
