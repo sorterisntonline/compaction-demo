@@ -29,7 +29,11 @@ def _resolve(items):
         elif isinstance(item, Eval):   code     = item.code
         else:                          data     = item
 
-    sel_js = f'document.querySelector("{selector}")' if selector else "null"
+    if selector:
+        safe = selector.replace("\\", "\\\\").replace('"', '\\"')
+        sel_js = f'document.querySelector("{safe}")'
+    else:
+        sel_js = "null"
 
     if code:
         if code.startswith("=>"):

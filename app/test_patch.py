@@ -50,7 +50,7 @@ result = Two[Selector("#foo")][REMOVE]
 check(
     "Two[Selector('#foo')][REMOVE]",
     result,
-    "document.querySelector('#foo').remove()",
+    'document.querySelector("#foo").remove()',
 )
 
 # REMOVE with no selector
@@ -58,7 +58,7 @@ result_no_sel = Two[REMOVE][Selector("#foo")]
 check(
     "Two[REMOVE][Selector('#foo')] (reversed order)",
     result_no_sel,
-    "document.querySelector('#foo').remove()",
+    'document.querySelector("#foo").remove()',
 )
 
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ result = Three[Selector("#foo")][MORPH]["<div>hi</div>"]
 check(
     "Three[Selector('#foo')][MORPH]['<div>hi</div>']",
     result,
-    "Idiomorph.morph(document.querySelector('#foo'), `<div>hi</div>`)",
+    'Idiomorph.morph(document.querySelector("#foo"), `<div>hi</div>`)',
 )
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ result = Three[Selector("#foo")][PREPEND]["<div>hi</div>"]
 check(
     "Three[Selector('#foo')][PREPEND]['<div>hi</div>']",
     result,
-    "Idiomorph.morph(document.querySelector('#foo'), `<div>hi</div>`, {morphStyle: 'prepend'})",
+    'Idiomorph.morph(document.querySelector("#foo"), `<div>hi</div>`, {morphStyle: \'prepend\'})',
 )
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ result = Three[Selector("#foo")][APPEND]["<div>hello</div>"]
 check(
     "Three[Selector('#foo')][APPEND]['<div>hello</div>']",
     result,
-    "Idiomorph.morph(document.querySelector('#foo'), `<div>hello</div>`, {morphStyle: 'append'})",
+    'Idiomorph.morph(document.querySelector("#foo"), `<div>hello</div>`, {morphStyle: \'append\'})',
 )
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ result = Three[Selector("#foo")][OUTER]["<div>replaced</div>"]
 check(
     "Three[Selector('#foo')][OUTER]['<div>replaced</div>']",
     result,
-    "document.querySelector('#foo').outerHTML = `<div>replaced</div>`",
+    'document.querySelector("#foo").outerHTML = `<div>replaced</div>`',
 )
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ result = Two[Selector("#foo")][Eval("=> $.focus()")]
 check(
     "Two[Selector('#foo')][Eval('=> $.focus()')]",
     result,
-    "(($) => { $.focus() })(document.querySelector('#foo'))",
+    '(($) => { $.focus() })(document.querySelector("#foo"))',
 )
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ result = Two[Selector("#bar")][MORPH]
 check(
     "Two[Selector('#bar')][MORPH] resolves with empty html",
     result,
-    "Idiomorph.morph(document.querySelector('#bar'), ``)",
+    'Idiomorph.morph(document.querySelector("#bar"), ``)',
 )
 note(
     "Two used for MORPH resolves prematurely with empty html",
@@ -236,7 +236,7 @@ result = Three[Selector("#foo")][MORPH]["<div>`tick`</div>"]
 check(
     "Backticks in html data are escaped to \\`",
     result,
-    r"Idiomorph.morph(document.querySelector('#foo'), `<div>\`tick\`</div>`)",
+    r'Idiomorph.morph(document.querySelector("#foo"), `<div>\`tick\`</div>`)',
 )
 
 # ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ result = Three[Selector("#foo")][MORPH]["<div>${x}</div>"]
 check(
     "${...} in html data is escaped to \\${",
     result,
-    r"Idiomorph.morph(document.querySelector('#foo'), `<div>\${x}</div>`)",
+    r'Idiomorph.morph(document.querySelector("#foo"), `<div>\${x}</div>`)',
 )
 
 # ---------------------------------------------------------------------------
@@ -262,7 +262,7 @@ result = str(partial)
 check(
     "str(Three[Selector('#foo')][MORPH]) returns unresolved warn or morph with empty html",
     result,
-    "Idiomorph.morph(document.querySelector('#foo'), ``)",
+    'Idiomorph.morph(document.querySelector("#foo"), ``)',
 )
 note(
     "str() on unresolved Three chain (missing data) returns morph with empty html",
@@ -311,7 +311,7 @@ result = Three[Selector("#foo")][MORPH][["div", "hello"]]
 check(
     "Three[Selector('#foo')][MORPH][hiccup vector ['div', 'hello']]",
     result,
-    "Idiomorph.morph(document.querySelector('#foo'), `<div>hello</div>`)",
+    'Idiomorph.morph(document.querySelector("#foo"), `<div>hello</div>`)',
 )
 
 # ---------------------------------------------------------------------------
@@ -323,11 +323,23 @@ result = Two[Selector("[data-id='42']")][REMOVE]
 check(
     "Selector with attribute selector [data-id='42']",
     result,
-    "document.querySelector('[data-id=\\'42\\']').remove()",
+    'document.querySelector("[data-id=\'42\']").remove()',
 )
 note(
     "Selector with single quotes — they are NOT escaped in sel_js",
     f"Got: {result!r}  (single quotes inside querySelector string not escaped)",
+)
+
+# ---------------------------------------------------------------------------
+# 18b. Selector with double quotes (the bug that broke event expand)
+# ---------------------------------------------------------------------------
+section("Selector with double quotes in attribute value")
+
+result = Two[Selector('[data-idx="42"]')][REMOVE]
+check(
+    'Selector with [data-idx="42"] — double quotes escaped',
+    result,
+    'document.querySelector("[data-idx=\\"42\\"]").remove()',
 )
 
 # ---------------------------------------------------------------------------
@@ -341,7 +353,7 @@ result = Three[Selector("#foo")][Selector("#bar")][REMOVE]
 check(
     "Three[Sel('#foo')][Sel('#bar')][REMOVE] — last selector wins",
     result,
-    "document.querySelector('#bar').remove()",
+    'document.querySelector("#bar").remove()',
 )
 note(
     "Multiple Selectors: last one silently wins; no error raised",
