@@ -1,6 +1,6 @@
 """Regression: /do snippet $key replacement must not break longer keys (e.g. $idx vs $id)."""
 
-from app.app import apply_snippet_substitutions, scrub
+from evaleval import apply_snippet_substitutions, scrub
 
 
 def test_longest_keys_first_idx_and_id():

@@ -5,11 +5,8 @@ Consensual Memory UI - Signed Snippets + poem.js
 
 import asyncio
 import json
-import hmac
 import hashlib
 import uuid
-import time
-import base64
 import traceback
 import os
 import subprocess
@@ -21,7 +18,22 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from app.state import get_app_state, get_being, evict_being
-from app.patch import One, Three, Four, Selector, Eval, MORPH, PREPEND, CLASSES, ADD, REMOVE
+from evaleval import (
+    Signer,
+    SnippetExecutionError,
+    exec_event,
+    shell_html,
+    One,
+    Three,
+    Four,
+    Selector,
+    Eval,
+    MORPH,
+    PREPEND,
+    CLASSES,
+    ADD,
+    REMOVE,
+)
 from schema import Event, Init, Thought, Perception, Response, Declaration, Vote, Compaction, from_dict
 from adam import Progress, STRATEGIES
 
@@ -47,34 +59,7 @@ def _is_authed(request: Request, session_id: str) -> bool:
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
-
-SHELL_HTML = """<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body>
-<script type="module">
-import { Idiomorph } from 'https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.esm.js';
-window.Idiomorph = Idiomorph;
-const ssePath = (location.pathname || '/').replace(/\\/$/, '') + '/sse';
-const es = new EventSource(ssePath);
-es.addEventListener('exec', e => {
-  eval(e.data);
-});
-document.addEventListener('submit', async e => {
-  e.preventDefault();
-  const f = e.target;
-  try {
-    const r = await fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)) });
-    const t = await r.text();
-    if (t) eval(t);
-  } catch (err) {
-    console.error(err);
-  }
-  if (f.dataset.reset !== 'false') f.reset();
-});
-</script>
-</body>
-</html>"""
+signer = Signer()
 
 def get_css_hash() -> str:
     css_path = Path(__file__).parent / "static" / "style.css"
@@ -83,69 +68,6 @@ def get_css_hash() -> str:
     return "dev"
 
 CSS_HASH = get_css_hash()
-
-
-# === SIGNING ===
-
-SECRET = hashlib.sha256(f"snippets-{uuid.uuid4()}".encode()).digest()
-_nonces: dict[str, float] = {}
-NONCE_TTL = 3600
-_last_nonce_clean: float = 0.0
-
-
-def _clean_nonces():
-    global _last_nonce_clean
-    now = time.time()
-    if now - _last_nonce_clean < 60:
-        return
-    _last_nonce_clean = now
-    for n in [n for n, exp in _nonces.items() if exp < now]:
-        del _nonces[n]
-
-
-def generate_nonce() -> str:
-    _clean_nonces()
-    nonce = uuid.uuid4().hex
-    _nonces[nonce] = time.time() + NONCE_TTL
-    return nonce
-
-
-def consume_nonce(nonce: str) -> bool:
-    _clean_nonces()
-    if nonce in _nonces:
-        del _nonces[nonce]
-        return True
-    return False
-
-
-def sign(code: str, nonce: str) -> str:
-    msg = f"{code}|{nonce}".encode()
-    return base64.urlsafe_b64encode(hmac.new(SECRET, msg, hashlib.sha256).digest()).decode()
-
-
-def verify(code: str, nonce: str, sig: str) -> bool:
-    return hmac.compare_digest(sign(code, nonce), sig)
-
-
-def scrub(value: str) -> str:
-    return repr(value)
-
-
-def apply_snippet_substitutions(snippet: str, form_data: dict[str, str]) -> str:
-    """Replace $key placeholders; longest keys first so $idx is not broken by $id."""
-    for key, value in sorted(form_data.items(), key=lambda x: len(x[0]), reverse=True):
-        snippet = snippet.replace(f"${key}", scrub(value))
-    return snippet
-
-
-def snippet_hidden(code: str) -> list:
-    nonce = generate_nonce()
-    sig = sign(code, nonce)
-    return [
-        ["input", {"type": "hidden", "name": "__snippet__", "value": code}],
-        ["input", {"type": "hidden", "name": "__sig__", "value": sig}],
-        ["input", {"type": "hidden", "name": "__nonce__", "value": nonce}],
-    ]
 
 
 # === GIT CONFIG ===
@@ -338,7 +260,7 @@ def _copy_control(being_file: str | None, idx: int | None) -> list:
                 "class": "copy-form",
                 "data-reset": "false",
             },
-            *snippet_hidden(f"copy_to_clipboard({json.dumps(being_file)}, {idx})"),
+            *signer.snippet_hidden(f"copy_to_clipboard({json.dumps(being_file)}, {idx})"),
             ["button", {"type": "submit", "class": "copy-btn", "aria-label": "Copy to clipboard"}, "⧉"],
         ]
     return ["span", {"class": "copy-btn"}, "⧉"]
@@ -412,7 +334,7 @@ def render_event(e: Event, i: int, memories: dict = None, being_file: str = None
 
     if has_body and being_file:
         return ["form.event.expandable", {**attrs, "action": "/do", "method": "post"},
-            *snippet_hidden(f"event_body('{being_file}', {i})"),
+            *signer.snippet_hidden(f"event_body('{being_file}', {i})"),
             ["button.event-row", {"type": "submit"}, summary],
         ]
 
@@ -431,7 +353,7 @@ def render_event_expanded(e: Event, i: int, memories: dict = None, being_file: s
     summary = _event_summary(e, i, etype, memories)
     body = _event_body_html(e, memories, being_file, i)
     collapse = ["form.collapse-form", {"action": "/do", "method": "post"},
-        *snippet_hidden(f"event_collapse('{being_file}', {i})"),
+        *signer.snippet_hidden(f"event_collapse('{being_file}', {i})"),
         ["button.event-close", {"type": "submit"}, "✕"],
     ] if being_file else None
     return ["div.event.expanded", attrs, summary, collapse, body]
@@ -470,14 +392,6 @@ def render_events_div(being_file: str) -> list:
     return ["div#events.events", event_list]
 
 
-def exec_event(js: str) -> str:
-    lines = ["event: exec"]
-    for line in js.split('\n'):
-        lines.append(f"data: {line}")
-    lines += ["", ""]
-    return "\n".join(lines)
-
-
 def _push_initial_page(title: str, body_content: list):
     yield exec_event(One[Eval(f"document.title = {json.dumps(title)}")])
     yield exec_event(Three[Selector("head")][MORPH][_head_content(title)])
@@ -506,7 +420,7 @@ def render_progress_bar(current: int, total: int, phase: str) -> list:
 
 def _go_form(being_file: str) -> list:
     return ["form", {"action": "/do", "method": "post", "class": "go-form"},
-        *snippet_hidden(f"go('{being_file}', $message)"),
+        *signer.snippet_hidden(f"go('{being_file}', $message)"),
         ["textarea", {"name": "message", "rows": "8"}],
         ["button", {"type": "submit"}, "go"],
     ]
@@ -552,7 +466,7 @@ async def execute(being, being_file: str, cmd):
 def _login_form(session_id: str) -> list:
     return ["div.beings",
         ["form", {"action": "/do", "method": "post"},
-            *snippet_hidden("login($password, $session_id)"),
+            *signer.snippet_hidden("login($password, $session_id)"),
             ["input", {"type": "hidden", "name": "session_id", "value": session_id}],
             ["input", {"type": "password", "name": "password", "placeholder": "password", "autofocus": "true"}],
             ["button", "enter"],
@@ -594,17 +508,17 @@ def being_content(being_file: str) -> list:
     form = _go_form(being_file)
 
     redact_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
-        *snippet_hidden(f"redact('{being_file}')"),
+        *signer.snippet_hidden(f"redact('{being_file}')"),
         ["button", {"onclick": "return confirm('redact last message?')"}, "↩ redact"]
     ]
 
     push_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
-        *snippet_hidden("git_push()"),
+        *signer.snippet_hidden("git_push()"),
         ["button", "⬆ push git"]
     ]
 
     compact_form = ["form", {"action": "/do", "method": "post", "style": "display:inline"},
-        *snippet_hidden(f"compact_async('{being_file}', $strategy)"),
+        *signer.snippet_hidden(f"compact_async('{being_file}', $strategy)"),
         ["select", {"name": "strategy"},
             ["option", {"value": "default"}, "default"],
             ["option", {"value": "resurrection"}, "resurrection"],
@@ -629,14 +543,14 @@ def git_content() -> list:
     token_set = bool(os.getenv('GITLAB_TOKEN', ''))
 
     url_form = ["form", {"action": "/do", "method": "post"},
-        *snippet_hidden("save_git_config($url)"),
+        *signer.snippet_hidden("save_git_config($url)"),
         ["input", {"type": "url", "name": "url", "value": cfg['url'], "placeholder": "https://gitlab.com/user/repo.git"}],
         ["span.token-status", "token ✓" if token_set else "token ✗ (set GITLAB_TOKEN)"],
         ["button", "save"]
     ]
 
     push_form = ["form", {"action": "/do", "method": "post"},
-        *snippet_hidden("git_push()"),
+        *signer.snippet_hidden("git_push()"),
         ["button", "⬆ push git"]
     ]
 
@@ -654,7 +568,7 @@ def config_content(being_file: str) -> list:
     ]
 
     form = ["form", {"action": "/do", "method": "post"},
-        *snippet_hidden(f"update_config('{being_file}', primary_color=$primary_color, secondary_color=$secondary_color)"),
+        *signer.snippet_hidden(f"update_config('{being_file}', primary_color=$primary_color, secondary_color=$secondary_color)"),
         ["div.config-section",
             ["label", "Primary Color:"],
             ["input", {"type": "color", "name": "primary_color", "value": colors["primary"]}]
@@ -758,19 +672,19 @@ async def sse_being(being_file: str, request: Request):
 
 @app.get("/")
 async def shell_root():
-    return HTMLResponse(SHELL_HTML)
+    return HTMLResponse(shell_html(sse_path="/sse"))
 
 
 @app.get("/git")
 async def shell_git():
-    return HTMLResponse(SHELL_HTML)
+    return HTMLResponse(shell_html(sse_path="/git/sse"))
 
 
 @app.get("/{being_file}/config")
 async def shell_config(being_file: str):
     if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
         return PlainTextResponse("not found", status_code=404)
-    return HTMLResponse(SHELL_HTML)
+    return HTMLResponse(shell_html(sse_path=f"/{being_file}/config/sse"))
 
 
 @app.get("/{being_file}")
@@ -779,29 +693,17 @@ async def shell_being(being_file: str):
         return PlainTextResponse("not found", status_code=404)
     if not (BEINGS_DIR / f"{being_file}.jsonl").exists():
         return PlainTextResponse("not found", status_code=404)
-    return HTMLResponse(SHELL_HTML)
+    return HTMLResponse(shell_html(sse_path=f"/{being_file}/sse"))
 
 
 @app.post("/do")
 async def do(request: Request):
     form = await request.form()
-
-    snippet = form.get('__snippet__', '')
-    sig = form.get('__sig__', '')
-    nonce = form.get('__nonce__', '')
-
-    if not all([snippet, sig, nonce]):
-        return PlainTextResponse("Missing fields", status_code=400)
-    if not verify(snippet, nonce, sig):
-        return PlainTextResponse("Invalid signature", status_code=403)
-    if not consume_nonce(nonce):
-        return PlainTextResponse("Invalid nonce", status_code=403)
-
-    form_data = {k: str(v) for k, v in form.items() if not k.startswith('__')}
-    snippet = apply_snippet_substitutions(snippet, form_data)
-
     try:
+        snippet = signer.verify_snippet(form)
         return eval(snippet)
+    except SnippetExecutionError as e:
+        return PlainTextResponse(e.message, status_code=e.status_code)
     except Exception as e:
         return PlainTextResponse(str(e), status_code=500)
 

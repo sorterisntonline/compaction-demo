@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "python-dotenv>=1.0.0",
     "tenacity>=8.0.0",
+    "evaleval>=0.2.3",
 ]
 
 [project.optional-dependencies]
