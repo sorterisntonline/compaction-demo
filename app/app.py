@@ -395,7 +395,7 @@ def render_events_div(being_file: str) -> list:
 def _push_initial_page(title: str, body_content: list):
     yield exec_event(One[Eval(f"document.title = {json.dumps(title)}")])
     yield exec_event(Three[Selector("head")][MORPH][_head_content(title)])
-    yield exec_event(Three[Selector("body")][MORPH][["body", body_content]])
+    yield exec_event(Three[Selector("#app")][MORPH][["div#app", body_content]])
 
 
 async def _stream_auth_then_initial(request: Request, session_id: str, title: str, body_content: list):

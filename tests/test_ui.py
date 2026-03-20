@@ -34,9 +34,17 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="session")
 def server(tmp_path_factory):
-    """
-    Start app on 127.0.0.1 with a free port. No login gate, mock LLM, isolated beings dir.
-    """
+    """Start app with auth disabled (PASSWORD='')."""
+    yield from _server_fixture(tmp_path_factory, password="")
+
+
+@pytest.fixture(scope="session")
+def server_auth(tmp_path_factory):
+    """Start app with auth enabled for login-loop tests."""
+    yield from _server_fixture(tmp_path_factory, password="test-password")
+
+
+def _server_fixture(tmp_path_factory, password: str):
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
     tmp = tmp_path_factory.mktemp("beings")
@@ -85,7 +93,7 @@ def server(tmp_path_factory):
 
     env = os.environ.copy()
     env["MOCK_LLM"] = "1"
-    env["PASSWORD"] = ""  # do not inherit a real PASSWORD (SSE would loop on login)
+    env["PASSWORD"] = password
     env.pop("OPENROUTER_API_KEY", None)
 
     proc = subprocess.Popen(
@@ -122,7 +130,7 @@ def server(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def browser_ctx(server):
+def browser_ctx():
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -145,6 +153,32 @@ def page(browser_ctx) -> Page:
 def goto_painted(page: Page, path: str, server: SimpleNamespace, selector: str):
     page.goto(f"{server.base_url}{path}", wait_until="domcontentloaded")
     page.wait_for_selector(selector, timeout=PAINT_MS)
+
+
+# === AUTH LOOP ===
+
+
+def test_login_form_does_not_duplicate_during_poll(page, server_auth):
+    goto_painted(page, "/", server_auth, "input[name='password']")
+    expect(page.locator("input[name='password']")).to_have_count(1)
+    expect(page.locator("button", has_text="enter")).to_have_count(1)
+
+    # Auth stream refreshes login UI repeatedly while unauthenticated.
+    # We should replace one mount node, never stack forms.
+    page.wait_for_timeout(3500)
+
+    expect(page.locator("input[name='password']")).to_have_count(1)
+    expect(page.locator("button", has_text="enter")).to_have_count(1)
+
+
+def test_login_success_transitions_out_of_login(page, server_auth):
+    goto_painted(page, "/", server_auth, "input[name='password']")
+    page.locator("input[name='password']").fill("test-password")
+    page.locator("button", has_text="enter").click()
+
+    page.wait_for_selector(".being-link", timeout=PAINT_MS)
+    expect(page.locator(".being-link")).to_contain_text("ember")
+    expect(page.locator("input[name='password']")).to_have_count(0)
 
 
 # === INDEX ===

@@ -16,7 +16,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "python-dotenv>=1.0.0",
     "tenacity>=8.0.0",
-    "evaleval>=0.2.3",
+    "evaleval @ git+https://github.com/tommy-mor/evaleval.git@v0.2.4",
 ]
 
 [project.optional-dependencies]
