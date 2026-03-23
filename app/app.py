@@ -91,11 +91,12 @@ def save_git_config(url: str):
 def login(password: str, session_id: str):
     token = _auth_token()
     if not token:
-        return PlainTextResponse("", status_code=204)
+        return PlainTextResponse("/* auth disabled */", status_code=200)
     if hashlib.sha256(f"auth|{password}".encode()).hexdigest() != token:
-        return PlainTextResponse("", status_code=204)
+        js = Three[Selector("#app")][MORPH][["div#app", _login_form(session_id, error="wrong password")]]
+        return PlainTextResponse(js, status_code=200)
     _authed_sessions.add(session_id)
-    resp = PlainTextResponse("", status_code=204)
+    resp = PlainTextResponse("/* login ok; SSE stream will paint app */", status_code=200)
     resp.set_cookie("session", token, httponly=True, samesite="lax")
     return resp
 
@@ -399,9 +400,10 @@ def _push_initial_page(title: str, body_content: list):
 
 
 async def _stream_auth_then_initial(request: Request, session_id: str, title: str, body_content: list):
-    while not _is_authed(request, session_id):
+    if not _is_authed(request, session_id):
         for ev in _push_initial_page("login", _login_form(session_id)):
             yield ev
+    while not _is_authed(request, session_id):
         await asyncio.sleep(1)
     for ev in _push_initial_page(title, body_content):
         yield ev
@@ -463,11 +465,12 @@ async def execute(being, being_file: str, cmd):
 
 # === CONTENT BUILDERS (body only, for SSE push) ===
 
-def _login_form(session_id: str) -> list:
+def _login_form(session_id: str, error: str | None = None) -> list:
     return ["div.beings",
         ["form", {"action": "/do", "method": "post"},
             *signer.snippet_hidden("login($password, $session_id)"),
             ["input", {"type": "hidden", "name": "session_id", "value": session_id}],
+            (["div", {"style": "color:#b00;margin-bottom:8px;"}, error] if error else None),
             ["input", {"type": "password", "name": "password", "placeholder": "password", "autofocus": "true"}],
             ["button", "enter"],
         ],
