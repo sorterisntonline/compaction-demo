@@ -1,7 +1,0 @@
-{:deps {com.blockether/spel {:mvn/version "0.7.3"}
-        org.clojure/clojure {:mvn/version "1.11.1"}}
- :paths ["src"]
- :aliases {:test {:extra-deps {io.github.cognitect-labs/test-runner
-                               {:git/url "https://github.com/cognitect-labs/test-runner.git"
-                                :sha "dfb30dd6605cb6c0efc275e1df1736f6e90d4d73"}}
-                  :main-opts ["-m" "cognitect.test-runner" "-d" "src"]}}}

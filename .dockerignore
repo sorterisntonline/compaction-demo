@@ -1,7 +1,0 @@
-.venv
-beings/
-__pycache__
-**/__pycache__
-*.pyc
-.git
-.DS_Store

@@ -1,7 +1,7 @@
 [project]
-name = "consensual-memory"
+name = "compaction-demo"
 version = "0.1.0"
-description = "Consensual Memory Compaction for AI Continuity"
+description = "Memory Compaction via Vote-Based Ranking"
 authors = [
     {name = "Tommy", email = "tommy@example.com"}
 ]
@@ -11,12 +11,8 @@ dependencies = [
     "scipy>=1.10.0",
     "anthropic>=0.18.0",
     "httpx>=0.25.0",
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
-    "python-multipart>=0.0.9",
     "python-dotenv>=1.0.0",
     "tenacity>=8.0.0",
-    "evaleval @ git+https://github.com/tommy-mor/evaleval.git@v0.2.4",
 ]
 
 [project.optional-dependencies]
