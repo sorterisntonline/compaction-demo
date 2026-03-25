@@ -1,181 +1,147 @@
-# Memory Compaction via Vote-Based Ranking
+# compaction-demo
 
-A demonstration of memory compaction for AI systems with finite context windows.
+An AI agent accumulates memories as an append-only JSONL log. When the log outgrows a fixed capacity, **compaction** decides which memories to keep and which to release. The decision is made by the agent itself: it votes on pairs of memories, and a rank-centrality algorithm turns those pairwise preferences into a global ordering.
 
-## Problem
+## The idea
 
-Large language models have finite context windows. When building AI agents with long-running memory, the event log eventually exceeds available tokens. Simply truncating loses important historical context. **Compaction** solves this by keeping the most valuable memories and releasing the rest.
+An agent has a **capacity** (say, 100 memories). It thinks, perceives, responds, and all of these become memories. Once the count exceeds `capacity / 2`, compaction fires. The agent is asked "which of these two memories matters more?" for a sample of pairs. The votes feed into a Markov-chain ranking algorithm that produces a global preference order. The top-ranked memories survive; the rest are released.
 
-## Solution: Vote-Based Ranking
+Released memories aren't deleted. They stay in the log and in `all_memories`. A future compaction can **resurrect** them if the agent's priorities shift.
 
-This repo implements compaction through **pairwise preference voting**:
+## How it works
 
-1. **Vote phase**: For a sample of memory pairs, ask the LLM: "Which memory is more important?" (-50 to +50 score).
-2. **Rank phase**: Aggregate votes using rank centrality (a tournament-style ranking algorithm) to produce a global preference order.
-3. **Keep phase**: Retain the top-ranked memories; release the rest.
-4. **Resurrect phase**: Optionally resurrect high-ranked "old" memories that were previously released.
+### Events
 
-The ranking algorithm is robust: it handles incomplete comparisons, cycles, and ties gracefully.
+Everything is an event, appended to a `.jsonl` file. State is derived by replaying the log.
 
-## Data Model
+| Event | Fields | Compactable? |
+|-------|--------|-------------|
+| `Init` | `timestamp, id, capacity, model, vote_model, api_key` | No (immune) |
+| `Thought` | `timestamp, content, id` | Yes |
+| `Perception` | `timestamp, content, id` | Yes |
+| `Response` | `timestamp, content, id` | Yes |
+| `Declaration` | `timestamp, content, id` | No (immune) |
+| `Vote` | `timestamp, vote_a_id, vote_b_id, vote_score, reasoning` | N/A (metadata) |
+| `Compaction` | `timestamp, kept_ids, released_ids, resurrected_ids` | N/A (metadata) |
 
-All events are JSON-serialized in a `.jsonl` file (one event per line). Events are immutable and append-only.
+`Init` and `Declaration` are immune -- they always stay in active memory. Votes and Compaction events are bookkeeping; they're never in the "current memory" set.
 
-```python
-# Memories (4 types)
-Thought(timestamp, content, id)      # Internal reasoning
-Perception(timestamp, content, id)   # External observation
-Response(timestamp, content, id)     # Output to user
-Declaration(timestamp, content, id)  # Self-description (immune to compaction)
+### The compaction algorithm
 
-# System events
-Init(timestamp, id, capacity, model, vote_model, api_key)  # Metadata (immune)
-Vote(timestamp, vote_a_id, vote_b_id, vote_score, reasoning)  # Pairwise preference
-Compaction(timestamp, kept_ids, released_ids, resurrected_ids)  # Compaction result
+```
+compact(being, strategy):
+
+  1. Guard: if current memories <= capacity/2, return early.
+
+  2. Collect all existing votes between known memories.
+     Run union-find to find disconnected components in the vote graph.
+
+  3. Bridge votes: if the vote graph has multiple components among
+     current memories, generate pairwise votes between components
+     so rank centrality can see the full picture.
+
+  4. Random votes: sample ~max(20, N/10) new random pairs from
+     current memories that haven't been compared yet.
+
+  5. Execute votes: for each new pair, ask the LLM
+     "which memory is more important? score -50 to +50"
+     and persist the Vote event.
+
+  6. Rank: feed ALL votes (historical + new) into rank_from_comparisons(),
+     which builds a comparison matrix and computes the stationary
+     distribution of a Markov chain. This produces a global ordering
+     over every memory the agent has ever had.
+
+  7. Allocate budget (= capacity/2) across four slot types:
+     - continuity:   top-ranked current memories
+     - resurrection: top-ranked released memories (brought back)
+     - random:       weighted sample of released memories (biased toward
+                     high-rank and old age)
+     - novelty:      most recent current memories by timestamp
+
+  8. Write a Compaction event recording kept_ids, released_ids,
+     and resurrected_ids. apply_event() updates being.current.
 ```
 
-**Immunity**: `Init` and `Declaration` are never compacted. They remain in active memory forever.
+### Strategies
 
-## Compaction Strategies
+A `CompactionStrategy` controls how the budget is split:
 
-The budget (capacity / 2) is divided among four slot types:
+| Strategy | Continuity | Resurrection | Random | Novelty |
+|----------|-----------|-------------|--------|---------|
+| `default` | 1.0 | 0 | 0 | 0 |
+| `resurrection` | 0.5 | 0.3 | 0 | 0.2 |
+| `dream` | 0.5 | 0.2 | 0.1 | 0.2 |
 
-- **default**: 100% continuity (pure rank-based keep, no resurrection)
-- **resurrection**: 50% continuity, 30% resurrection (revive old memories), 20% novelty (recent additions)
-- **dream**: 50% continuity, 20% resurrection, 10% random, 20% novelty (experimental)
+**default** is pure rank-based survival. **resurrection** brings back old memories that rank well globally. **dream** adds a random element -- buried memories can resurface by chance, weighted by rank and age.
 
-## Running
+### Rank centrality
 
-### Setup
+The ranking engine (`rank.py`) implements rank centrality for incomplete pairwise comparisons. Given a comparison matrix A where `A[i][j] / (A[i][j] + A[j][i])` is the probability that j is preferred to i, it constructs a transition matrix for a random walk and finds its stationary distribution via power iteration. The stationary probability of each item is its global score.
 
-```bash
+This is the same math used for tournament rankings -- it handles cycles, incomplete data, and varying comparison strengths gracefully. The graph of comparisons must be connected, which is why `compact()` generates bridge votes between disconnected components.
+
+### State management
+
+`Being` holds the live state:
+
+- `events` -- the full ordered log (append-only)
+- `current` -- `{id: event}` dict of active memories
+- `all_memories` -- `{id: event}` dict of every memory ever (never shrinks)
+- `votes` -- `{(low_id, high_id): score}` cache of pairwise comparisons
+
+`apply_event()` is the pure state-transition function, called both during live operation (`append()`) and during replay (`load()`). A freshly-loaded being has identical state to one that has been running live -- this is the event-sourcing guarantee.
+
+## Usage
+
+```
 uv sync
 ```
 
 ### CLI
 
 ```bash
-# Create a being with capacity 10
-python cli.py init my_being.jsonl --model gpt-4o --capacity 10
-
-# Add some perceptions
-python cli.py add my_being.jsonl "I saw a cat"
-python cli.py add my_being.jsonl "The cat meowed"
-python cli.py add my_being.jsonl "I gave the cat food"
-
-# Show current state
-python cli.py show my_being.jsonl
-
-# Run compaction (requires OPENROUTER_API_KEY env var)
-python cli.py compact my_being.jsonl --strategy default
-
-# Check the result
-python cli.py show my_being.jsonl
+python cli.py init agent.jsonl --model gpt-4o --capacity 20
+python cli.py add agent.jsonl "The user prefers short answers"
+python cli.py add agent.jsonl "We're working on a billing system"
+python cli.py show agent.jsonl
+python cli.py compact agent.jsonl --strategy default
 ```
+
+Compaction requires `OPENROUTER_API_KEY` set in the environment (or `.env`). The vote LLM is configured via `vote_model` in the Init event.
 
 ### Tests
 
 ```bash
-# Run all tests
-uv run pytest tests/ -v
-
-# Run compaction-specific tests
-uv run pytest tests/test_integration.py::test_compact_with_stubbed_vote -v
-uv run pytest tests/test_rank.py -v
+uv run pytest
 ```
 
-## Key Files
-
-- **`adam.py`**: Core compaction engine
-  - `Being`: The state object (events, current memory, votes, rankings)
-  - `compact()`: Main compaction async generator
-  - `vote()`: LLM-based pairwise comparison
-  - `find_components()`: Union-find for vote graph connectivity
-  - `rank_from_comparisons()`: Aggregate votes into global ranking
-
-- **`schema.py`**: Event type definitions (immutable dataclasses)
-
-- **`rank.py`**: Rank centrality algorithm
-  - Pure math: builds a Markov chain from comparison matrix
-  - No LLM calls, deterministic
-
-- **`tests/`**:
-  - `test_integration.py`: End-to-end compaction (with stubbed votes)
-  - `test_rank.py`: Ranking algorithm correctness
-  - `test_memory.py`: Schema serialization and prompt formatting
-  - `test_vote_cache.py`: Vote caching behavior
-
-## How Compaction Works (Detailed)
-
-### Phase 1: Check Capacity
-If `len(current) <= capacity // 2`, compaction is unnecessary. Return early.
-
-### Phase 2: Build Vote Graph
-Collect all existing votes on memories that are still in the system. Run union-find to detect disconnected components in the vote graph.
-
-### Phase 3: Bridge Votes
-If vote graph has multiple components, generate new votes to bridge them. This ensures the rank centrality algorithm can see the full ordering.
-
-### Phase 4: Random Votes
-Generate ~10% of possible pairs as random samples. This fills gaps in the comparison matrix.
-
-### Phase 5: Execute Votes
-For each new pair, call `vote(being, memory_a, memory_b)` → LLM → cache the result.
-
-### Phase 6: Global Ranking
-Call `rank_from_comparisons()` using the full vote matrix (all past + new votes) to produce a global ranking.
-
-### Phase 7: Budget Allocation
-Allocate `capacity // 2` slots across four strategies:
-- **Continuity**: top N current memories by rank
-- **Resurrection**: top M released (non-current) memories by rank
-- **Random**: biased sample from remaining released (prefer old + high-rank)
-- **Novelty**: most recent N current memories (by timestamp)
-
-All four groups are collected into `kept_ids` (continuity + novelty) and `resurrected_ids` (resurrection + random). Everything else is `released_ids`.
-
-### Phase 8: Write Compaction Event
-Append a `Compaction` event to the JSONL. This event applies itself via `apply_event()`, which:
-- Removes `released_ids` from `current`
-- Adds `resurrected_ids` back to `current` (if they exist in `all_memories`)
-
-## Testing Without LLM
-
-Tests mock the `vote()` function to avoid LLM API calls. Example from `test_integration.py`:
+All tests run without an API key. They stub the vote function:
 
 ```python
-def fake_vote(_being, a, b):
-    return 50 if a.id > b.id else -50  # Deterministic: higher IDs win
+async def fake_vote(_being, a, b):
+    return 50 if a.id > b.id else -50
 
 monkeypatch.setattr("adam.vote", fake_vote)
 ```
 
-With a fixed random seed, compaction is deterministic and repeatable:
+With a fixed `random.seed`, compaction is fully deterministic.
 
-```python
-random.seed(0)
-asyncio.run(compact(being1))
-kept_1 = set(being1.current.keys())
+**test_integration.py** -- end-to-end: builds a being with 12 memories at capacity 4, runs compaction with stubbed votes, asserts the result is deterministic and that current memory count equals `budget + 1` (budget + immune Init).
 
-random.seed(0)
-asyncio.run(compact(being2))
-kept_2 = set(being2.current.keys())
+**test_rank.py** -- verifies the ranking algorithm produces correct orderings from comparison matrices.
 
-assert kept_1 == kept_2  # Same seed → same outcome
+**test_memory.py** -- schema round-trip serialization, prompt formatting, union-find correctness, and that `apply_event(Compaction(...))` correctly removes released memories from `current`.
+
+**test_vote_cache.py** -- verifies that `vote()` reuses cached scores without calling the LLM, and that score sign flips correctly when argument order is reversed.
+
+## Files
+
 ```
-
-## Environment
-
-Set these to run compaction against a real LLM:
-
-```bash
-export OPENROUTER_API_KEY="sk-or-v1-..."
+adam.py       Being, compact(), vote(), append(), load(), apply_event()
+schema.py     Event types (frozen dataclasses), to_dict/from_dict
+rank.py       rank_centrality(), rank_from_comparisons()
+cli.py        CLI: init, add, show, compact
+tests/        14 tests, all offline
+pyproject.toml
 ```
-
-Or mock `adam.vote()` in your tests for reproducibility.
-
-## References
-
-- **Rank centrality**: Graph-based ranking for incomplete pairwise comparisons. Used in sports rankings, recommendation systems.
-- **Event sourcing**: Append-only log design. All state derived from event replay.
-- **Memory compaction**: Garbage collection strategy for finite context windows.
